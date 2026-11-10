@@ -1,0 +1,3 @@
+# ADR 0004 – Frontend stack choices
+**Status:** accepted. React 19 + Vite + TypeScript strict; Tailwind CSS v4 with CSS-variable design tokens (dark default, 8px rhythm); shadcn/ui-style components written by hand over the unified `radix-ui` package (the shadcn CLI needs network/interactivity; the code is the same pattern); Motion for React with `MotionConfig reducedMotion="user"`; TanStack Query for server state; Zustand only for persisted UI preferences (theme, sidebar); fonts bundled via `@fontsource-variable` (offline-safe).
+**Deferred:** Recharts until Phase 5 (no chart exists yet). Versions are the latest stable at install time; `package-lock.json` / `uv.lock` pin them.

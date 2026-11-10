@@ -1,0 +1,2 @@
+# ADR 0005 – Split configuration: environment vs config.json
+**Status:** accepted. **Decision:** deployment concerns (DB URL, CORS, directories, pool sizes) come from environment variables / `.env` (`Settings`); processing parameters from `config/config.json` (`AppConfig`, unknown keys rejected, fail-fast on invalid values). `LOG_LEVEL` env overrides `logging.level`. Relative paths resolve against the project root (`KATOMARAN_ROOT` override) so cwd never matters. The `/config` endpoint returns a sanitised projection (RTSP source URL hidden).

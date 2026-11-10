@@ -1,0 +1,17 @@
+.git
+.venv
+.tools
+.env
+.env.*
+!.env.example
+cache
+temp
+models
+datasets
+storage
+logs
+frontend
+**/__pycache__
+**/.mypy_cache
+**/.ruff_cache
+**/.pytest_cache

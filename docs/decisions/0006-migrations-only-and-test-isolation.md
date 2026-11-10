@@ -1,0 +1,2 @@
+# ADR 0006 – Alembic-only schema and schema-isolated tests
+**Status:** accepted. `create_all()` is never used; the app does not migrate at startup (release step instead: `scripts\migrate.ps1` / Render `preDeployCommand`). Tests run migrations inside a throw-away `test_<hex>` schema and verify model↔migration parity. Only the `app_metadata` table exists in Phase 0; domain tables arrive with their slices.

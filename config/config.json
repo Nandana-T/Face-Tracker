@@ -1,0 +1,21 @@
+{
+  "video": {
+    "source_type": "file",
+    "source": "",
+    "reconnect_interval_seconds": 5
+  },
+  "detection": {
+    "frame_skip": 2,
+    "confidence_threshold": 0.5
+  },
+  "recognition": {
+    "similarity_threshold": 0.55
+  },
+  "tracking": {
+    "max_missing_seconds": 2
+  },
+  "logging": {
+    "level": "INFO",
+    "events_file": "logs/events.log"
+  }
+}

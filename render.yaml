@@ -1,0 +1,19 @@
+# Render blueprint for the API (NOT applied automatically; no resources are provisioned by this repo).
+# Secrets (DATABASE_URL, CORS_ORIGINS) are set in the Render dashboard (sync: false).
+services:
+  - type: web
+    name: katomaran-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/v1/health
+    preDeployCommand: alembic upgrade head   # run from /app/backend (WORKDIR)
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: DB_USE_PGBOUNCER
+        value: "false"

@@ -1,0 +1,41 @@
+# Local PostgreSQL fallback (and optional containerised API).
+#   docker compose up -d db            -> PostgreSQL only (recommended for local dev)
+#   docker compose --profile api up    -> also builds and runs the API container
+# NOTE: not exercised in the Phase 0 verification environment (Docker is not installed there).
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: katomaran
+      POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:-katomaran}
+      POSTGRES_DB: katomaran
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U katomaran -d katomaran"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    profiles: ["api"]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql://katomaran:${LOCAL_DB_PASSWORD:-katomaran}@db:5432/katomaran
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - logs:/app/logs
+
+volumes:
+  pgdata:
+  logs:
