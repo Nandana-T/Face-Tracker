@@ -23,7 +23,6 @@ describe("overview empty states (no invented data)", () => {
 });
 
 describe.each([
-  ["/live", "Live Monitoring", "No video source connected."],
   ["/visitors", "Visitors", "No visitors registered yet"],
   ["/events", "Event Logs", "No events recorded"],
   ["/analytics", "Analytics", "No analytics available"],
@@ -32,6 +31,15 @@ describe.each([
     renderApp(path);
     expect(await screen.findByRole("heading", { level: 1, name: heading })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: empty })).toBeInTheDocument();
+  });
+});
+
+describe("/live page shell", () => {
+  it("renders the monitoring console instead of a placeholder", async () => {
+    renderApp("/live");
+    expect(await screen.findByRole("heading", { level: 1, name: "Live Monitoring" })).toBeInTheDocument();
+    expect(await screen.findByTestId("viewport")).toBeInTheDocument();
+    expect(screen.getByText(/Face detection only/)).toBeInTheDocument();
   });
 });
 

@@ -40,7 +40,8 @@ test.describe("with a healthy (stubbed) backend", () => {
     const panel = page.getByTestId("system-status");
     await expect(panel).toContainText("katomaran-api v0.1.0 (test)");
     await expect(panel).toContainText("Applied (revision 0001)");
-    await expect(panel.getByText("Not implemented yet")).toHaveCount(4);
+    await expect(panel.getByText("Not running")).toHaveCount(2);
+    await expect(panel.getByText("Not implemented yet")).toHaveCount(2);
   });
 
   test("sidebar collapses and state survives reload", async ({ page }) => {

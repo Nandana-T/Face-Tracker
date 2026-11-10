@@ -10,10 +10,11 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, create_engine, text
 
 from app.core.config import AppConfig
 from app.core.settings import Settings, get_settings
+from app.db.base import Base
 from app.db.session import create_db_engine
 from app.main import create_app
 
@@ -37,6 +38,30 @@ def make_config(tmp_path: Path, **video: Any) -> AppConfig:
     return AppConfig.model_validate(
         {"video": video, "logging": {"events_file": str(tmp_path / "logs" / "events.log")}}
     )
+
+
+def make_full_config(tmp_path: Path, **sections: Any) -> AppConfig:
+    """Config with arbitrary sections (video/detection/worker/stream...) plus a tmp events log."""
+    data: dict[str, Any] = {"logging": {"events_file": str(tmp_path / "logs" / "events.log")}}
+    data.update(sections)
+    return AppConfig.model_validate(data)
+
+
+@pytest.fixture
+def sqlite_engine(tmp_path: Path) -> Iterator[Engine]:
+    """File-backed SQLite with the ORM schema: fast, no network, used for session-logic tests.
+
+    A file (not ``:memory:`` + StaticPool) so each worker thread gets its own pooled connection;
+    one shared connection is not safe under the concurrent ``to_thread`` calls the API makes.
+    Migration correctness is verified separately against real PostgreSQL (integration tests).
+    """
+    engine = create_engine(
+        f"sqlite+pysqlite:///{tmp_path / 'sessions.db'}",
+        connect_args={"check_same_thread": False, "timeout": 15},
+    )
+    Base.metadata.create_all(engine)
+    yield engine
+    engine.dispose()
 
 
 @pytest.fixture

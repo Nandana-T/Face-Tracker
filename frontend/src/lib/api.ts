@@ -3,6 +3,8 @@ import type {
   HealthResponse,
   PublicConfigResponse,
   ReadinessResponse,
+  SessionOut,
+  SourcesResponse,
   SystemStatusResponse,
 } from "./api-types";
 
@@ -29,11 +31,20 @@ export class ApiError extends Error {
   }
 }
 
-async function send(path: string, signal?: AbortSignal): Promise<Response> {
+async function send(
+  path: string,
+  signal?: AbortSignal,
+  init?: { method: "POST"; body?: unknown },
+): Promise<Response> {
   const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
   try {
     return await fetch(`${API_BASE_URL}${path}`, {
-      headers: { Accept: "application/json" },
+      method: init?.method ?? "GET",
+      headers: {
+        Accept: "application/json",
+        ...(init?.body !== undefined ? { "Content-Type": "application/json" } : {}),
+      },
+      body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
       signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     });
   } catch (cause) {
@@ -73,7 +84,30 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   return parseJson<T>(response);
 }
 
+async function postJson<T>(path: string, body?: unknown): Promise<T> {
+  const response = await send(path, undefined, { method: "POST", body });
+  if (!response.ok) throw await toHttpError(response);
+  return parseJson<T>(response);
+}
+
+/** WebSocket base derived from the API base (relative in dev -> same origin as the page). */
+export function streamUrl(sessionId: string): string {
+  const base = API_BASE_URL.startsWith("http")
+    ? API_BASE_URL.replace(/^http/, "ws")
+    : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${API_BASE_URL}`;
+  return `${base}/sessions/${encodeURIComponent(sessionId)}/stream`;
+}
+
 export const api = {
+  sources: (signal?: AbortSignal) => getJson<SourcesResponse>("/sources", signal),
+  activeSession: (signal?: AbortSignal) =>
+    getJson<{ session: SessionOut | null }>("/sessions/active", signal),
+  session: (id: string, signal?: AbortSignal) =>
+    getJson<SessionOut>(`/sessions/${encodeURIComponent(id)}`, signal),
+  /** 202 = new session, 200 = the identical session was already active (idempotent). */
+  startSession: (sourceId: string) => postJson<SessionOut>("/sessions", { source_id: sourceId }),
+  stopSession: (id: string) => postJson<SessionOut>(`/sessions/${encodeURIComponent(id)}/stop`),
+
   health: (signal?: AbortSignal) => getJson<HealthResponse>("/health", signal),
 
   /** 503 is a *valid* readiness answer (database down), so its body is returned, not thrown. */

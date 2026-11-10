@@ -54,7 +54,9 @@ describe("overview system status", () => {
     expect(within(panel).getByText("katomaran-api v0.1.0 (test)")).toBeInTheDocument();
     expect(within(panel).getByText("2m 5s")).toBeInTheDocument();
     expect(within(panel).getByText("Applied (revision 0001)")).toBeInTheDocument();
-    expect(within(panel).getAllByText("Not implemented yet")).toHaveLength(4);
+    // Worker/detector are real Phase 1 components (not running here); recognizer/tracker are later phases.
+    expect(within(panel).getAllByText("Not running")).toHaveLength(2);
+    expect(within(panel).getAllByText("Not implemented yet")).toHaveLength(2);
   });
 
   it("shows loading skeletons while status is pending", async () => {

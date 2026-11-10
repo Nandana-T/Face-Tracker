@@ -1,0 +1,56 @@
+{
+  "video": {
+    "source_type": "file",
+    "source": "",
+    "reconnect_interval_seconds": 5,
+    "sample_dir": "datasets/none",
+    "sources": [
+      {
+        "id": "e2e-align",
+        "label": "E2E alignment clip",
+        "type": "file",
+        "path": "datasets/e2e/alignment.mp4"
+      },
+      {
+        "id": "e2e-long",
+        "label": "E2E long clip",
+        "type": "file",
+        "path": "datasets/e2e/long.mp4"
+      },
+      {
+        "id": "e2e-broken",
+        "label": "E2E broken file",
+        "type": "file",
+        "path": "datasets/e2e/broken.mp4"
+      },
+      {
+        "id": "e2e-missing",
+        "label": "E2E missing clip",
+        "type": "file",
+        "path": "datasets/e2e/missing.mp4"
+      }
+    ]
+  },
+  "detection": {
+    "frame_skip": 2,
+    "confidence_threshold": 0.5,
+    "intra_op_threads": 4
+  },
+  "worker": {
+    "realtime_pacing": true,
+    "heartbeat_interval_seconds": 2,
+    "stats_interval_seconds": 0.5,
+    "start_timeout_seconds": 30,
+    "stop_timeout_seconds": 10
+  },
+  "recognition": {
+    "similarity_threshold": 0.55
+  },
+  "tracking": {
+    "max_missing_seconds": 2
+  },
+  "logging": {
+    "level": "INFO",
+    "events_file": "logs/e2e-events.log"
+  }
+}

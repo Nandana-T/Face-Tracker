@@ -1,0 +1,1 @@
+﻿astronaut_nasa_public_domain.png: portrait of astronaut Eileen Collins, NASA, public domain (bundled with scikit-image as skimage.data.astronaut). Used only as a face-detection test fixture. No other face imagery is stored in the repository.

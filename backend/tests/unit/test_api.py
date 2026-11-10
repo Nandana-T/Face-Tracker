@@ -36,7 +36,10 @@ def test_system_status_when_db_down_is_error_envelope(client_no_db: TestClient) 
         "migration_revision": None,
         "migrations_applied": False,
     }
-    assert {c["state"] for c in body["components"].values()} == {"not_implemented"}
+    assert body["components"]["video_worker"]["state"] == "not_running"
+    assert body["components"]["face_detector"]["state"] == "not_running"
+    assert body["components"]["face_recognizer"]["state"] == "not_implemented"
+    assert body["components"]["tracker"]["state"] == "not_implemented"
     assert body["active_video_sources"] == 0
 
 

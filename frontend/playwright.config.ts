@@ -1,16 +1,17 @@
-﻿import path from "node:path";
-import { defineConfig } from "@playwright/test";
+﻿import { defineConfig } from "@playwright/test";
 
-const isWin = process.platform === "win32";
-const python =
-  process.env.KATOMARAN_PYTHON ??
-  path.resolve(__dirname, "..", ".venv", isWin ? "Scripts/python.exe" : "bin/python");
-
+// The @live tests run against the real stack (API + video worker + YOLO model + embedded local
+// PostgreSQL), and the Vite dev server, all started by e2e/global-setup.ts and stopped by
+// global-teardown.ts (Playwright's own webServer teardown does not terminate process trees on this
+// Windows setup). The hosted database is never used by tests.
 export default defineConfig({
   testDir: "./e2e",
-  timeout: 30_000,
+  globalSetup: "./e2e/global-setup.ts",
+  globalTeardown: "./e2e/global-teardown.ts",
+  timeout: 60_000,
   expect: { timeout: 10_000 },
-  fullyParallel: true,
+  fullyParallel: false, // live tests share one backend with a single active session
+  workers: 1,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   reporter: [["list"]],
@@ -22,23 +23,4 @@ export default defineConfig({
     channel: process.env.PW_CHANNEL || undefined,
     trace: "retain-on-failure",
   },
-  webServer: [
-    {
-      // Real backend (used by the @live test; mocked tests never reach it).
-      command: `"${python}" -m uvicorn app.main:app_factory --factory --host 127.0.0.1 --port 8000`,
-      cwd: path.resolve(__dirname, "..", "backend"),
-      url: "http://127.0.0.1:8000/api/v1/health",
-      reuseExistingServer: !process.env.CI,
-      timeout: 60_000,
-    },
-    {
-      command: "npx vite --host 127.0.0.1",
-      url: "http://127.0.0.1:5173",
-      // Playwright gives the child a closed stdin; Vite treats that as "terminal closed" and exits
-      // unless it believes it runs in CI.
-      env: { CI: "true" },
-      reuseExistingServer: !process.env.CI,
-      timeout: 60_000,
-    },
-  ],
 });

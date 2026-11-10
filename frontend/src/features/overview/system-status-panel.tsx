@@ -15,6 +15,9 @@ const componentLabel: Record<ComponentStatus["state"], { value: string; tone: St
   not_implemented: { value: "Not implemented yet", tone: "idle" },
   not_configured: { value: "Not configured", tone: "warn" },
   not_running: { value: "Not running", tone: "idle" },
+  ready: { value: "Ready", tone: "ok" },
+  active: { value: "Processing", tone: "ok" },
+  unavailable: { value: "Unavailable", tone: "error" },
 };
 
 export function SystemStatusPanel() {

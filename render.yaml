@@ -1,5 +1,8 @@
 # Render blueprint for the API (NOT applied automatically; no resources are provisioned by this repo).
-# Secrets (DATABASE_URL, CORS_ORIGINS) are set in the Render dashboard (sync: false).
+# Secrets (DATABASE_URL, CORS_ORIGINS, WORKER_TOKEN) are set in the Render dashboard (sync: false).
+# The AI worker is NOT deployed here: it runs next to the camera (or on a GPU host) and dials this API
+# over wss:// with WORKER_TOKEN. Keep this service at ONE instance - live session state is in memory.
+# UNVERIFIED: Docker is not installed on the development machine, so this blueprint has never been built.
 services:
   - type: web
     name: katomaran-api
@@ -17,3 +20,6 @@ services:
         sync: false
       - key: DB_USE_PGBOUNCER
         value: "false"
+      - key: WORKER_TOKEN
+        sync: false
+    numInstances: 1

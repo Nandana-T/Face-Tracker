@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from app.core.config import DetectionConfig, RecognitionConfig, TrackingConfig
+from app.core.config import RecognitionConfig, TrackingConfig
 
 
 class HealthResponse(BaseModel):
@@ -29,7 +29,9 @@ class ReadinessResponse(BaseModel):
     checks: ReadinessChecks
 
 
-ComponentState = Literal["not_implemented", "not_configured", "not_running"]
+ComponentState = Literal[
+    "not_implemented", "not_configured", "not_running", "ready", "unavailable", "active"
+]
 
 
 class ComponentStatus(BaseModel):
@@ -67,6 +69,18 @@ class PublicVideoConfig(BaseModel):
     reconnect_interval_seconds: float
 
 
+class PublicDetectionConfig(BaseModel):
+    frame_skip: int
+    confidence_threshold: float
+    model: str
+    input_size: int
+
+
+class PublicStreamConfig(BaseModel):
+    max_fps: float
+    max_width: int
+
+
 class PublicLoggingConfig(BaseModel):
     level: str
 
@@ -76,7 +90,8 @@ class PublicConfigResponse(BaseModel):
 
     environment: str
     video: PublicVideoConfig
-    detection: DetectionConfig
+    detection: PublicDetectionConfig
+    stream: PublicStreamConfig
     recognition: RecognitionConfig
     tracking: TrackingConfig
     logging: PublicLoggingConfig

@@ -2,11 +2,39 @@
   "video": {
     "source_type": "file",
     "source": "",
-    "reconnect_interval_seconds": 5
+    "reconnect_interval_seconds": 5,
+    "sample_dir": "datasets/samples",
+    "sources": [],
+    "rtsp": {
+      "connect_timeout_seconds": 10,
+      "read_timeout_seconds": 10,
+      "max_reconnect_attempts": 0,
+      "max_backoff_seconds": 30
+    },
+    "max_consecutive_read_failures": 30
   },
   "detection": {
     "frame_skip": 2,
-    "confidence_threshold": 0.5
+    "confidence_threshold": 0.5,
+    "model": "yolov11n-face",
+    "input_size": 640,
+    "iou_threshold": 0.45,
+    "max_faces": 100,
+    "intra_op_threads": 4,
+    "cpu_spin_wait": false
+  },
+  "worker": {
+    "queue_size": 4,
+    "realtime_pacing": true,
+    "heartbeat_interval_seconds": 5,
+    "stats_interval_seconds": 1,
+    "start_timeout_seconds": 30,
+    "stop_timeout_seconds": 10
+  },
+  "stream": {
+    "max_fps": 15,
+    "max_width": 960,
+    "jpeg_quality": 70
   },
   "recognition": {
     "similarity_threshold": 0.55

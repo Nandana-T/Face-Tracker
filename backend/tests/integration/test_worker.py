@@ -18,7 +18,7 @@ def test_worker_exits_nonzero_when_database_down(
         "load_app_config",
         lambda _: __import__("tests.conftest", fromlist=["x"]).make_config(tmp_path),
     )
-    assert video_worker.main() == 1
+    assert video_worker.main(["--check"]) == 1
 
 
 def test_worker_exits_2_on_invalid_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -31,4 +31,4 @@ def test_worker_exits_2_on_invalid_config(tmp_path: Path, monkeypatch: pytest.Mo
             tmp_path, config_file=bad, database_url=SecretStr("postgresql://a@b/c")
         ),
     )
-    assert video_worker.main() == 2
+    assert video_worker.main(["--check"]) == 2

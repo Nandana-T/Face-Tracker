@@ -5,6 +5,8 @@ Importing this module never loads AI models and never opens a database connectio
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -21,6 +23,8 @@ from app.core.logging import setup_logging
 from app.core.middleware import RequestIdMiddleware
 from app.core.settings import Settings, get_settings
 from app.db.session import create_db_engine, create_session_factory
+from app.services.session_manager import SessionManager
+from app.services.session_store import SessionStore
 
 logger = logging.getLogger("katomaran.app")
 
@@ -45,8 +49,21 @@ def create_app(
             "Starting katomaran-api",
             extra={"environment": settings.app_env, "version": settings.app_version},
         )
+        sessions: SessionManager = app.state.sessions
+        try:
+            await sessions.reconcile_orphans()
+        except Exception as exc:  # database may be down at boot; the API must still start
+            logger.warning("Could not reconcile orphaned sessions: %s", type(exc).__name__)
+        monitor = asyncio.create_task(sessions.monitor_worker())
         yield
         logger.info("Shutting down katomaran-api")
+        monitor.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await monitor
+        try:
+            await sessions.shutdown()
+        except Exception as exc:
+            logger.warning("Session shutdown cleanup failed: %s", type(exc).__name__)
         if owns_engine:
             engine.dispose()
 
@@ -64,6 +81,7 @@ def create_app(
     app.state.engine = engine
     app.state.session_factory = create_session_factory(engine)
     app.state.started_at = time.monotonic()
+    app.state.sessions = SessionManager(config, SessionStore(app.state.session_factory))
 
     register_exception_handlers(app)
     app.add_middleware(

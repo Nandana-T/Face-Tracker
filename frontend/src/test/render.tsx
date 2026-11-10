@@ -17,8 +17,8 @@ export const statusFixture: SystemStatusResponse = {
   uptime_seconds: 125,
   database: { status: "ok", migration_revision: "0001", migrations_applied: true },
   components: {
-    video_worker: { state: "not_implemented", detail: "Planned for Phase 1." },
-    face_detector: { state: "not_implemented", detail: "Planned for Phase 1." },
+    video_worker: { state: "not_running", detail: "No worker connected." },
+    face_detector: { state: "not_running", detail: "Model status is reported by the worker." },
     face_recognizer: { state: "not_implemented", detail: "Planned for Phase 2." },
     tracker: { state: "not_implemented", detail: "Planned for Phase 3." },
   },
@@ -29,7 +29,8 @@ export const statusFixture: SystemStatusResponse = {
 export const configFixture: PublicConfigResponse = {
   environment: "test",
   video: { source_type: "file", source_configured: false, reconnect_interval_seconds: 5 },
-  detection: { frame_skip: 2, confidence_threshold: 0.5 },
+  detection: { frame_skip: 2, confidence_threshold: 0.5, model: "yolov11n-face", input_size: 640 },
+  stream: { max_fps: 15, max_width: 960 },
   recognition: { similarity_threshold: 0.55 },
   tracking: { max_missing_seconds: 2 },
   logging: { level: "INFO" },
@@ -90,8 +91,13 @@ export function mockApi(s: Scenario = {}) {
   return fetchMock;
 }
 
-export function renderApp(path = "/", scenario: Scenario = {}) {
+export function renderApp(
+  path = "/",
+  scenario: Scenario = {},
+  wrapFetch?: (base: typeof fetch) => typeof fetch,
+) {
   const fetchMock = mockApi(scenario);
+  if (wrapFetch) vi.stubGlobal("fetch", wrapFetch(fetchMock as unknown as typeof fetch));
   const client = createQueryClient();
   client.setDefaultOptions({
     queries: { retry: false, refetchInterval: false, staleTime: 0 },

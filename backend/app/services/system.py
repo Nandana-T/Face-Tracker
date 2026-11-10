@@ -16,13 +16,16 @@ from app.schemas.system import (
     DatabaseStatus,
     DependencyCheck,
     PublicConfigResponse,
+    PublicDetectionConfig,
     PublicLoggingConfig,
+    PublicStreamConfig,
     PublicVideoConfig,
     ReadinessChecks,
     ReadinessResponse,
     SystemComponents,
     SystemStatusResponse,
 )
+from app.services.session_manager import SessionManager
 
 SERVICE_NAME = "katomaran-api"
 
@@ -42,13 +45,37 @@ def readiness(engine: Engine, settings: Settings) -> ReadinessResponse:
 
 
 def system_status(
-    session: Session, settings: Settings, config: AppConfig, started_at: float
+    session: Session,
+    settings: Settings,
+    config: AppConfig,
+    started_at: float,
+    sessions: SessionManager,
 ) -> SystemStatusResponse:
     engine = session.get_bind()
     assert isinstance(engine, Engine)
     check = check_database(engine, settings.db_connect_retries, settings.db_retry_backoff_seconds)
     revision = current_revision(session) if check.ok else None
     phase = "Planned for Phase {n}."
+    worker = sessions.worker
+    if worker is None:
+        worker_c = ComponentStatus(
+            state="not_running", detail="No worker connected. Start scripts\start-worker.ps1."
+        )
+        det_c = ComponentStatus(
+            state="not_running", detail="Model status is reported by the worker once connected."
+        )
+    else:
+        worker_c = ComponentStatus(
+            state="active" if sessions.live else "ready",
+            detail=f"Worker '{worker.worker_id}' connected.",
+        )
+        det_c = (
+            ComponentStatus(state="ready", detail=f"Model '{config.detection.model}' available.")
+            if worker.model_available
+            else ComponentStatus(
+                state="unavailable", detail=worker.model_detail or "Model unavailable."
+            )
+        )
     return SystemStatusResponse(
         service=SERVICE_NAME,
         version=settings.app_version,
@@ -60,13 +87,13 @@ def system_status(
             migrations_applied=revision is not None,
         ),
         components=SystemComponents(
-            video_worker=ComponentStatus(state="not_implemented", detail=phase.format(n=1)),
-            face_detector=ComponentStatus(state="not_implemented", detail=phase.format(n=1)),
+            video_worker=worker_c,
+            face_detector=det_c,
             face_recognizer=ComponentStatus(state="not_implemented", detail=phase.format(n=2)),
             tracker=ComponentStatus(state="not_implemented", detail=phase.format(n=3)),
         ),
-        active_video_sources=0,
-        video_source_configured=bool(config.video.source.strip()),
+        active_video_sources=1 if sessions.live else 0,
+        video_source_configured=bool(config.video.source.strip() or config.video.sources),
     )
 
 
@@ -75,10 +102,16 @@ def public_config(settings: Settings, config: AppConfig) -> PublicConfigResponse
         environment=settings.app_env,
         video=PublicVideoConfig(
             source_type=config.video.source_type,
-            source_configured=bool(config.video.source.strip()),
+            source_configured=bool(config.video.source.strip() or config.video.sources),
             reconnect_interval_seconds=config.video.reconnect_interval_seconds,
         ),
-        detection=config.detection,
+        detection=PublicDetectionConfig(
+            frame_skip=config.detection.frame_skip,
+            confidence_threshold=config.detection.confidence_threshold,
+            model=config.detection.model,
+            input_size=config.detection.input_size,
+        ),
+        stream=PublicStreamConfig(max_fps=config.stream.max_fps, max_width=config.stream.max_width),
         recognition=config.recognition,
         tracking=config.tracking,
         logging=PublicLoggingConfig(level=settings.log_level or config.logging.level),

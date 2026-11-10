@@ -42,7 +42,9 @@ def ready(engine: EngineDep, settings: SettingsDep) -> JSONResponse:
 def system_status(
     request: Request, session: SessionDep, settings: SettingsDep, config: ConfigDep
 ) -> SystemStatusResponse:
-    return system_service.system_status(session, settings, config, request.app.state.started_at)
+    return system_service.system_status(
+        session, settings, config, request.app.state.started_at, request.app.state.sessions
+    )
 
 
 @router.get("/config", response_model=PublicConfigResponse, summary="Sanitised configuration")

@@ -18,7 +18,7 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       strictPort: true,
       // Dev only: the browser talks to /api on the Vite origin, so no CORS is involved.
-      proxy: { "/api": { target: proxyTarget, changeOrigin: true } },
+      proxy: { "/api": { target: proxyTarget, changeOrigin: true, ws: true } },
     },
     build: { sourcemap: false, chunkSizeWarningLimit: 600 },
     test: {

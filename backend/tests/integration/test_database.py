@@ -35,7 +35,7 @@ def test_migrations_apply_and_roll_back_cleanly(isolated_schema: tuple[Settings,
     cfg = alembic_cfg(engine)
     command.upgrade(cfg, "head")
     insp = inspect(engine)
-    assert {"app_metadata", "alembic_version"} <= set(insp.get_table_names())
+    assert {"app_metadata", "processing_sessions", "alembic_version"} <= set(insp.get_table_names())
     pk = insp.get_pk_constraint("app_metadata")
     assert pk["constrained_columns"] == ["key"]
     command.upgrade(cfg, "head")  # idempotent
@@ -70,7 +70,7 @@ def test_api_ready_and_status_with_real_database(
     assert ready.json()["checks"]["database"]["status"] == "ok"
     assert status.json()["database"] == {
         "status": "ok",
-        "migration_revision": "0001",
+        "migration_revision": "0002",
         "migrations_applied": True,
     }
 

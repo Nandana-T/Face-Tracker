@@ -49,6 +49,14 @@ class Settings(BaseSettings):
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
     )
 
+    # --- Worker <-> API ---------------------------------------------------------
+    # Shared secret the worker presents (Authorization: Bearer) when it connects to the API.
+    # Unset = the worker endpoint refuses every connection.
+    worker_token: SecretStr | None = None
+    # Where the worker finds the API (ws:// or wss://). A deployment concern, so not in config.json.
+    worker_api_url: str = "ws://127.0.0.1:8000"
+    worker_id: str = "worker-1"
+
     # --- Files / directories (relative paths resolve against the project root) ---
     config_file: Path = Path("config/config.json")
     log_dir: Path = Path("logs")
