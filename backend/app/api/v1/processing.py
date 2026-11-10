@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Query, Request, Response
+from pydantic import BaseModel
 
 from app.core.errors import AppError
 from app.schemas.processing import (
@@ -100,6 +101,23 @@ async def get_session(session_id: str, request: Request) -> SessionOut:
 )
 async def session_stats(session_id: str, request: Request) -> SessionStats:
     return (await manager(request).get_session(session_id)).stats
+
+
+class StreamTicket(BaseModel):
+    ticket: str
+    expires_in: int
+
+
+@router.post(
+    "/sessions/{session_id}/stream-ticket",
+    response_model=StreamTicket,
+    responses={404: {"model": ErrorResponse}},
+    summary="Single-use ticket (30 s) for the browser WebSocket of this session",
+)
+async def stream_ticket(session_id: str, request: Request) -> StreamTicket:
+    await manager(request).get_session(session_id)  # 404 for unknown sessions
+    ticket, ttl = request.app.state.auth.issue_ticket(session_id)
+    return StreamTicket(ticket=ticket, expires_in=ttl)
 
 
 @router.post(

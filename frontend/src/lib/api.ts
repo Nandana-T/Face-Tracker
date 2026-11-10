@@ -1,3 +1,4 @@
+import { authToken, notifyUnauthorized } from "./auth";
 import type {
   ErrorEnvelope,
   HealthResponse,
@@ -43,6 +44,7 @@ async function send(
       headers: {
         Accept: "application/json",
         ...(init?.body !== undefined ? { "Content-Type": "application/json" } : {}),
+        ...(authToken.get() ? { Authorization: `Bearer ${authToken.get()}` } : {}),
       },
       body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
       signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
@@ -62,6 +64,9 @@ async function parseJson<T>(response: Response): Promise<T> {
 }
 
 async function toHttpError(response: Response): Promise<ApiError> {
+  // A rejected/expired token anywhere sends the user back to the sign-in screen. (A wrong password
+  // on the login form is also 401 but must not clear anything: it carries `invalid_credentials`.)
+  const clone = response.clone();
   let envelope: Partial<ErrorEnvelope> | undefined;
   try {
     envelope = (await response.json()) as ErrorEnvelope;
@@ -69,6 +74,7 @@ async function toHttpError(response: Response): Promise<ApiError> {
     /* non-JSON error body (e.g. proxy 502) */
   }
   const err = envelope?.error;
+  if (clone.status === 401 && err?.code === "unauthorized") notifyUnauthorized();
   return new ApiError(
     err?.message ?? `Request failed with status ${response.status}`,
     "http",
@@ -91,14 +97,30 @@ async function postJson<T>(path: string, body?: unknown): Promise<T> {
 }
 
 /** WebSocket base derived from the API base (relative in dev -> same origin as the page). */
-export function streamUrl(sessionId: string): string {
+export function streamUrl(sessionId: string, ticket?: string): string {
   const base = API_BASE_URL.startsWith("http")
     ? API_BASE_URL.replace(/^http/, "ws")
     : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${API_BASE_URL}`;
-  return `${base}/sessions/${encodeURIComponent(sessionId)}/stream`;
+  const url = `${base}/sessions/${encodeURIComponent(sessionId)}/stream`;
+  return ticket ? `${url}?ticket=${encodeURIComponent(ticket)}` : url;
+}
+
+export interface AuthStatus {
+  required: boolean;
+  authenticated: boolean;
 }
 
 export const api = {
+  authStatus: (signal?: AbortSignal) => getJson<AuthStatus>("/auth/status", signal),
+  async login(password: string): Promise<void> {
+    const { access_token } = await postJson<{ access_token: string }>("/auth/login", { password });
+    authToken.set(access_token);
+  },
+  /** Single-use (30 s) ticket that authorises one WebSocket connection for this session. */
+  streamTicket: (sessionId: string) =>
+    postJson<{ ticket: string; expires_in: number }>(
+      `/sessions/${encodeURIComponent(sessionId)}/stream-ticket`,
+    ),
   sources: (signal?: AbortSignal) => getJson<SourcesResponse>("/sources", signal),
   activeSession: (signal?: AbortSignal) =>
     getJson<{ session: SessionOut | null }>("/sessions/active", signal),

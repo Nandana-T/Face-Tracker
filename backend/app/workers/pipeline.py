@@ -12,8 +12,12 @@ Back-pressure policy
 * Frames never accumulate beyond ``queue_size``.
 
 Frame skipping: ``frame_skip = N`` runs the detector on frame indices 0, N+1, 2(N+1), ...
-Skipped frames are counted, never "filled in" - detections are NOT carried over or interpolated
-(that would be tracking, which belongs to a later phase).
+Skipped frames are counted and never published; detections are NOT carried over or interpolated.
+
+Tracking (Phase 2): the tracker, when configured, is updated exactly once per ANALYSED frame with
+the frame's real timestamp, so its time-based rules (confirmation, lost-time limits, velocity) stay
+correct whatever ``frame_skip`` or the source FPS is. A tracker failure never stops detection: the
+error is counted, the tracker is reset and processing continues.
 """
 
 from __future__ import annotations
@@ -30,8 +34,10 @@ from typing import Any
 import cv2
 
 from app.schemas.detection import DetectionResult, FaceBox
+from app.schemas.tracking import TrackingSummary, TrackOut
 from app.vision.detection.interfaces import DetectorError, FaceDetector, InvalidFrame
 from app.vision.sources.interfaces import Frame, SourceError, VideoSource
+from app.vision.tracking.interfaces import FaceTracker, TrackerOutput
 
 logger = logging.getLogger("katomaran.pipeline")
 
@@ -76,7 +82,10 @@ class PipelineStats:
     frame_width: int = 0
     frame_height: int = 0
     source_fps: float = 0.0
+    tracking: dict[str, Any] = field(default_factory=dict)  # flat tracks_* counters
+    tracking_errors: int = 0
     _inference_total_ms: float = 0.0
+    _tracking_total_ms: float = 0.0
     _started: float = field(default_factory=time.monotonic)
     _recent: deque[tuple[float, int]] = field(default_factory=lambda: deque(maxlen=64))
 
@@ -109,6 +118,7 @@ class PipelineStats:
             "frame_height": self.frame_height,
             "source_fps": round(self.source_fps, 2),
             "elapsed_seconds": round(now - self._started, 2),
+            **self.tracking,
         }
 
 
@@ -130,13 +140,55 @@ def encode_jpeg(pixels: Any, max_width: int, quality: int) -> bytes:
     return bytes(buf.tobytes())
 
 
-def to_result(frame: Frame, faces: list[Any], inference_ms: float) -> DetectionResult:
+def to_result(
+    frame: Frame,
+    faces: list[Any],
+    inference_ms: float,
+    tracking: TrackerOutput | None = None,
+    tracking_ms: float = 0.0,
+) -> DetectionResult:
     boxes: list[FaceBox] = []
     for f in faces:
         x1, y1 = max(0, int(round(f.x1))), max(0, int(round(f.y1)))
         x2, y2 = min(frame.width, int(round(f.x2))), min(frame.height, int(round(f.y2)))
         if x2 > x1 and y2 > y1:
             boxes.append(FaceBox(bbox=(x1, y1, x2, y2), confidence=round(f.confidence, 4)))
+    tracks: list[TrackOut] = []
+    summary: TrackingSummary | None = None
+    if tracking is not None:
+        for t in tracking.tracks:
+            bx1, by1 = max(0, int(round(t.bbox[0]))), max(0, int(round(t.bbox[1])))
+            bx2 = min(frame.width, int(round(t.bbox[2])))
+            by2 = min(frame.height, int(round(t.bbox[3])))
+            if bx2 <= bx1 or by2 <= by1:
+                continue
+            conf = t.detection_confidence
+            last = t.last_observed_confidence
+            tracks.append(
+                TrackOut(
+                    track_id=t.track_id,
+                    state=t.state.value,
+                    bbox=(bx1, by1, bx2, by2),
+                    observed=t.observed,
+                    detection_confidence=None if conf is None else round(conf, 4),
+                    last_observed_confidence=None if last is None else round(last, 4),
+                    first_seen_ms=t.first_seen_ms,
+                    last_seen_ms=t.last_seen_ms,
+                    age_ms=t.age_ms,
+                    hits=t.hits,
+                    missed_updates=t.missed_updates,
+                    last_update_frame=t.last_update_frame,
+                )
+            )
+        c = tracking.counts
+        summary = TrackingSummary(
+            tentative=c.tentative,
+            confirmed=c.confirmed,
+            lost=c.lost,
+            created_total=c.created_total,
+            confirmed_total=c.confirmed_total,
+            tracking_ms=round(tracking_ms, 3),
+        )
     return DetectionResult(
         frame_id=frame.index,
         timestamp_ms=frame.timestamp_ms,
@@ -144,6 +196,8 @@ def to_result(frame: Frame, faces: list[Any], inference_ms: float) -> DetectionR
         frame_height=frame.height,
         faces=boxes,
         inference_ms=round(inference_ms, 2),
+        tracks=tracks,
+        tracking=summary,
     )
 
 
@@ -157,7 +211,9 @@ class ProcessingPipeline:
         on_state: StateCallback | None = None,
         on_stats: StatsCallback | None = None,
         clock: Callable[[], float] = time.monotonic,
+        tracker: FaceTracker | None = None,
     ) -> None:
+        self.tracker = tracker
         self.source = source
         self.detector = detector
         self.settings = settings
@@ -238,6 +294,8 @@ class ProcessingPipeline:
                     "skip": self.settings.frame_skip,
                 },
             )
+            if self.tracker is not None:
+                logger.info("Tracker initialized")
             self._reader = threading.Thread(
                 target=self._read_loop,
                 args=(info.fps, info.is_live),
@@ -263,6 +321,12 @@ class ProcessingPipeline:
                 self.reader_joined = not self._reader.is_alive()
                 if not self.reader_joined:
                     logger.error("Frame reader thread did not terminate within 5 s")
+            if self.tracker is not None:
+                try:
+                    self.tracker.reset()
+                    logger.info("Tracker reset (session ended)")
+                except Exception:  # noqa: BLE001
+                    logger.exception("Tracker reset failed")
             try:
                 self.detector.close()
             except Exception:  # noqa: BLE001
@@ -312,7 +376,8 @@ class ProcessingPipeline:
                 except DetectorError as exc:
                     return Outcome("ERROR", exc.code, str(exc))
                 inference_ms = getattr(self.detector, "last_inference_ms", None) or elapsed_ms
-                result = to_result(frame, faces, inference_ms)
+                track_out, tracking_ms = self._track(frame, faces)
+                result = to_result(frame, faces, inference_ms, track_out, tracking_ms)
                 st = self.stats
                 st.frames_processed += 1
                 st.faces_last_frame = len(result.faces)
@@ -328,6 +393,51 @@ class ProcessingPipeline:
                     jpeg = encode_jpeg(frame.pixels, s.stream_max_width, s.jpeg_quality)
                 self._on_result(result, jpeg)
             self._tick_stats()
+
+    def _track(self, frame: Frame, faces: list[Any]) -> tuple[TrackerOutput | None, float]:
+        """Update the tracker with this analysed frame. Never raises."""
+        tracker = self.tracker
+        if tracker is None:
+            return None, 0.0
+        try:
+            started = time.perf_counter()
+            out = tracker.update(
+                list(faces), frame.timestamp_ms, frame.index, (frame.width, frame.height)
+            )
+            elapsed_ms = (time.perf_counter() - started) * 1000
+        except Exception:  # noqa: BLE001 - tracking must never take detection down
+            self.stats.tracking_errors += 1
+            logger.exception("Tracker update failed; tracker reset")
+            try:
+                tracker.reset()
+            except Exception:  # noqa: BLE001
+                logger.exception("Tracker reset failed")
+            st = self.stats
+            st.tracking = {**st.tracking, "tracks_errors": st.tracking_errors}
+            return None, 0.0
+        self.stats._tracking_total_ms += elapsed_ms
+        self._publish_tracking_stats(out, elapsed_ms)
+        return out, elapsed_ms
+
+    def _publish_tracking_stats(self, out: TrackerOutput, elapsed_ms: float) -> None:
+        st = self.stats
+        c = out.counts
+        n = st.frames_processed + 1  # the current frame is counted right after this call
+        st.tracking = {
+            "tracks_enabled": 1,
+            "tracks_confirmed": c.confirmed,
+            "tracks_tentative": c.tentative,
+            "tracks_lost": c.lost,
+            "tracks_created_total": c.created_total,
+            "tracks_confirmed_total": c.confirmed_total,
+            "tracks_rejected_total": c.rejected_total,
+            "tracks_removed_total": c.removed_total,
+            "tracks_recovered_total": c.recovered_total,
+            "tracks_invalid_detections": c.invalid_detections,
+            "tracks_errors": st.tracking_errors,
+            "tracking_ms_last": round(elapsed_ms, 3),
+            "tracking_ms_avg": round(st._tracking_total_ms / n, 3),
+        }
 
     def _tick_stats(self) -> None:
         now = self._clock()

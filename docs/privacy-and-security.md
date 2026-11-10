@@ -20,23 +20,30 @@ Detection is not identification: a box means "a face-like region", not "a person
 "Face detections (sum)" and explains why.
 
 ## Credentials and secrets
-* `DATABASE_URL`, `WORKER_TOKEN` and RTSP URLs are read from environment/`.env` (git-ignored). `config.json` holds only the
-  *name* of the variable (`url_env`) for an RTSP source - never the URL. Validation rejects a raw URL there.
+* `DATABASE_URL`, `WORKER_TOKEN`, `ADMIN_PASSWORD`, `AUTH_SECRET` and RTSP URLs are read from environment/`.env` (git-ignored). `config.json` holds only
+  the *name* of an RTSP variable (`url_env`); validation rejects a raw URL there. A repository scan finds none of these values outside `.env`.
 * The API never returns source locations; `GET /config` and `GET /sources` are sanitised (tested).
-* **Outstanding blocker:** the Supabase database password from Phase 0 was shared in a chat and has **not been rotated**
-  (`.env` still contains it). Anyone who saw that message can reach the hosted database. Rotate it in the Supabase dashboard,
-  update `.env`, and only then run `scripts\migrate.ps1` against the hosted database (migration `0002` is pending there).
-  Until then Phase 1 uses the embedded local PostgreSQL.
+* **Resolved:** the Supabase password shared in chat during Phase 0 has been **rotated** (fingerprint check passes; nothing printed); `.env` uses the Session-pooler string with `sslmode=require`
+  (client→pooler TLS verified). The old password still appears in earlier chat history, which is harmless once rotated. `scripts\migrate-cloud.ps1` still refuses to run if the exposed password ever returns.
+* **Phase 2:** tracks are temporary, per-session, held in memory and discarded when the session ends; only aggregate counters are stored. No face images, embeddings or identities are created or stored.
 
-## Access control - what exists and what does not
-| Surface | Control today | Gap |
+## Access control (Phase 1.5)
+| Surface | Control | Notes |
 |---|---|---|
-| `/worker/ws` | Bearer `WORKER_TOKEN`, constant-time compare; refused when unset; one worker at a time | Token is a shared secret; no rotation/mTLS |
-| `/sessions/*/stream` (browser frames) | `Origin` allow-list (= CORS origins) + unguessable 128-bit session id | **No user authentication.** Anyone who can reach the API and learns a session id can watch the stream. Origin is not enforced for non-browser clients |
-| REST (`/sources`, `/sessions`) | CORS allow-list only | **No authentication/authorization** - anyone who can reach the API can start/stop processing |
+| REST (`/sources`, `/sessions*`, `/system/status`, `/config`) | Bearer token from `POST /auth/login` (single shared admin password, HMAC-signed, 8 h, login throttled) | Mandatory in production: startup fails without `ADMIN_PASSWORD`/`AUTH_SECRET`. `/health`, `/ready` stay public and reveal nothing |
+| Browser frame stream | Single-use, 30 s, session-bound ticket (browsers cannot set WebSocket headers) **plus** the Origin allow-list | The access token is never placed in a URL. Frames are therefore not reachable without signing in |
+| Worker link | `WORKER_TOKEN` bearer, constant-time compare, refused when unset (≥ 24 chars in production); independent of the admin password (tested) | One worker at a time |
+| CORS | explicit origins only; `https://` only in production; no credentials/cookies are used, so cross-site request forgery does not apply | |
+| Interactive API docs / OpenAPI | not served in production | |
+| Source configuration | server-side only; the browser can only pick an id | RTSP credentials never leave the worker environment |
 
-**Do not expose this API to the internet with a real camera or real visitor footage until an authentication phase adds
-user login, per-user authorization and audit logging.** On a trusted LAN/dev machine it is acceptable.
+**Security assumptions and remaining gaps** (deliberately minimal system, not a full IAM):
+1. One shared password = one role. No per-user accounts, audit trail, password reset or MFA. Anyone with the password can start/stop sessions and watch frames.
+2. Tokens cannot be revoked individually (they expire; changing `AUTH_SECRET` invalidates all). The token is kept in `sessionStorage`, so an XSS bug would expose it - the app renders no user-supplied HTML and ships a strict dependency set, but there is no CSP yet.
+3. Login throttling and ticket replay protection are in API-process memory (fine for the single-instance design; use a shared store before scaling out).
+4. TLS is expected from the platform (Render/Vercel). Without HTTPS the password and token travel in clear text - do not use sign-in over plain HTTP outside a trusted LAN.
+5. The ticket is in the WebSocket query string and may appear in server access logs for ~30 s of validity; it is single use.
+6. Live footage is still personal data: retention, consent and legal basis remain the operator's responsibility (see above).
 
 ## Network
 * RTSP is credential-bearing and usually plaintext. Keep camera VLANs private; run the worker next to the camera (it

@@ -1,6 +1,6 @@
 # Phase 1 technical report – video ingestion and real-time face detection
 
-Status: implemented and verified on the development machine; **awaiting approval**. Nothing is committed or pushed.
+Status: implemented and verified on the development machine; **awaiting approval**. Blockers raised here (credential, real footage, licence, access control) were worked in [phase-1-5-report.md](phase-1-5-report.md); counts below are the Phase 1 snapshot. Nothing is committed or pushed.
 Scope: detection only – no recognition, embeddings, identity, tracking, entry/exit logging, unique-visitor counts or analytics.
 
 ## 1. What was built

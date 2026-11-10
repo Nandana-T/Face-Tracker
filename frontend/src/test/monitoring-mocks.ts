@@ -1,5 +1,5 @@
 import { vi } from "vitest";
-import type { FrameHeader, SessionOut, SessionStats, SourcesResponse } from "@/lib/api-types";
+import type { FrameHeader, SessionOut, SessionStats, SourcesResponse, Track } from "@/lib/api-types";
 
 export const emptyStats: SessionStats = {
   frames_read: 0,
@@ -41,7 +41,7 @@ export const sessionFixture = (over: Partial<SessionOut> = {}): SessionOut => ({
   error: null,
   connection: null,
   stats: emptyStats,
-  settings: { model: "yolov11n-face", frame_skip: 2, confidence_threshold: 0.5 },
+  settings: { model: "yolov11n-face", frame_skip: 2, confidence_threshold: 0.5, tracking_enabled: true },
   ...over,
 });
 
@@ -121,6 +121,7 @@ export interface ProcessingController {
   startResponse: (sourceId: string) => Response | Promise<Response>;
   stopResponse: () => Response | Promise<Response>;
   calls: { method: string; path: string; body?: unknown }[];
+  tickets: number;
 }
 
 export function createController(over: Partial<ProcessingController> = {}): ProcessingController {
@@ -131,6 +132,7 @@ export function createController(over: Partial<ProcessingController> = {}): Proc
     startResponse: () => json(sessionFixture(), 202),
     stopResponse: () => json(sessionFixture({ state: "STOPPING" })),
     calls: [],
+    tickets: 0,
     ...over,
   };
   return c;
@@ -151,6 +153,10 @@ export function processingFetch(c: ProcessingController) {
       }
       if (path === "/sessions/active") return json({ session: c.active });
       if (method === "POST" && path === "/sessions") return c.startResponse(body.source_id);
+      if (method === "POST" && path.endsWith("/stream-ticket")) {
+        c.tickets += 1;
+        return json({ ticket: `ticket-${c.tickets}`, expires_in: 30 });
+      }
       if (method === "POST" && path.endsWith("/stop")) return c.stopResponse();
       if (method === "GET" && path.startsWith("/sessions/")) {
         return c.current ? json(c.current) : apiError(404, "session_not_found", "No such processing session.");
@@ -158,3 +164,36 @@ export function processingFetch(c: ProcessingController) {
       return apiError(404, "not_found", "Not Found");
     }) as typeof fetch;
 }
+
+export const trackFixture = (over: Partial<Track> = {}): Track => ({
+  track_id: 1,
+  state: "CONFIRMED",
+  bbox: [100, 50, 200, 150],
+  observed: true,
+  detection_confidence: 0.93,
+  last_observed_confidence: 0.93,
+  first_seen_ms: 0,
+  last_seen_ms: 480,
+  age_ms: 480,
+  hits: 5,
+  missed_updates: 0,
+  last_update_frame: 12,
+  ...over,
+});
+
+/** A frame header carrying tracking metadata. */
+export const trackedHeader = (tracks: Track[], over: Partial<FrameHeader> = {}): FrameHeader =>
+  frameHeader({
+    tracks,
+    tracking: {
+      schema_version: 1,
+      enabled: true,
+      tentative: tracks.filter((t) => t.state === "TENTATIVE").length,
+      confirmed: tracks.filter((t) => t.state === "CONFIRMED").length,
+      lost: tracks.filter((t) => t.state === "LOST").length,
+      created_total: tracks.length,
+      confirmed_total: tracks.length,
+      tracking_ms: 0.2,
+    },
+    ...over,
+  });

@@ -9,9 +9,15 @@ export const python =
   process.env.KATOMARAN_PYTHON ??
   path.join(root, ".venv", isWin ? "Scripts/python.exe" : "bin/python");
 
+/** Test-only credentials for the throw-away E2E stack (not secrets: they protect nothing real). */
+export const E2E_PASSWORD = "e2e-admin-password-123";
+const E2E_AUTH_SECRET = "e2e-auth-secret-0123456789-0123456789-abcdef";
+
 export interface E2eEnvironment {
   DATABASE_URL: string;
   CONFIG_FILE: string;
+  ADMIN_PASSWORD: string;
+  AUTH_SECRET: string;
 }
 
 /**
@@ -23,7 +29,12 @@ export interface E2eEnvironment {
  */
 export function prepareE2e(): E2eEnvironment {
   if (process.env.KATOMARAN_E2E_DATABASE_URL) {
-    return { DATABASE_URL: process.env.KATOMARAN_E2E_DATABASE_URL, CONFIG_FILE: "config/config.e2e.json" };
+    return {
+      DATABASE_URL: process.env.KATOMARAN_E2E_DATABASE_URL,
+      CONFIG_FILE: "config/config.e2e.json",
+      ADMIN_PASSWORD: E2E_PASSWORD,
+      AUTH_SECRET: E2E_AUTH_SECRET,
+    };
   }
   const run = (args: string[], cwd: string, env: NodeJS.ProcessEnv = {}) =>
     execFileSync(python, args, { cwd, env: { ...process.env, ...env }, encoding: "utf8" }).trim();
@@ -44,5 +55,10 @@ export function prepareE2e(): E2eEnvironment {
   fs.writeFileSync(path.join(dir, "broken.mp4"), Buffer.from("this is not a video file".repeat(100)));
 
   process.env.KATOMARAN_E2E_DATABASE_URL = databaseUrl;
-  return { DATABASE_URL: databaseUrl, CONFIG_FILE: "config/config.e2e.json" };
+  return {
+    DATABASE_URL: databaseUrl,
+    CONFIG_FILE: "config/config.e2e.json",
+    ADMIN_PASSWORD: E2E_PASSWORD,
+    AUTH_SECRET: E2E_AUTH_SECRET,
+  };
 }

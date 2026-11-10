@@ -28,6 +28,7 @@ def test_defaults_when_sections_omitted(tmp_path: Path) -> None:
 def test_repository_config_is_valid() -> None:
     config = load_app_config(project_root() / "config" / "config.json")
     assert config.tracking.max_missing_seconds == 2
+    assert config.tracking.enabled and config.tracking.confirm_hits == 3
 
 
 @pytest.mark.parametrize(
@@ -37,6 +38,11 @@ def test_repository_config_is_valid() -> None:
         {"detection": {"confidence_threshold": 1.5}},
         {"video": {"source_type": "ftp"}},
         {"tracking": {"max_missing_seconds": 0}},
+        {"tracking": {"confirm_hits": 0}},
+        {"tracking": {"match_iou": 0}},
+        {"tracking": {"high_confidence": 1.2}},
+        {"tracking": {"max_tracks": 0}},
+        {"tracking": {"unknown_knob": 1}},
         {"logging": {"level": "LOUD"}},
         {"logging": {"events_file": " "}},
         {"unknown_section": {}},

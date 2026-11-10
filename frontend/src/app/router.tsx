@@ -1,5 +1,6 @@
 import { createBrowserRouter, createMemoryRouter, type RouteObject } from "react-router-dom";
 import { AppShell } from "@/components/layout/app-shell";
+import { AuthGate } from "@/features/auth/auth-gate";
 import { AnalyticsPage } from "@/features/analytics/analytics-page";
 import { EventsPage } from "@/features/events/events-page";
 import { MonitoringPage } from "@/features/monitoring/monitoring-page";
@@ -11,7 +12,11 @@ import { NotFoundPage } from "@/routes/not-found";
 export const routes: RouteObject[] = [
   {
     path: "/",
-    element: <AppShell />,
+    element: (
+      <AuthGate>
+        <AppShell />
+      </AuthGate>
+    ),
     children: [
       { index: true, element: <OverviewPage /> },
       { path: "live", element: <MonitoringPage /> },

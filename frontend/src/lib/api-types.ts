@@ -59,7 +59,7 @@ export interface PublicConfigResponse {
   detection: { frame_skip: number; confidence_threshold: number; model: string; input_size: number };
   stream: { max_fps: number; max_width: number };
   recognition: { similarity_threshold: number };
-  tracking: { max_missing_seconds: number };
+  tracking: { enabled?: boolean; max_missing_seconds: number; confirm_hits?: number };
   logging: { level: string };
 }
 
@@ -119,6 +119,19 @@ export interface SessionStats {
   frame_height: number;
   source_fps: number;
   elapsed_seconds: number;
+  /** Phase 2 tracking counters (temporary session-scoped tracks - NOT visitors). */
+  tracks_enabled?: number;
+  tracks_confirmed?: number;
+  tracks_tentative?: number;
+  tracks_lost?: number;
+  tracks_created_total?: number;
+  tracks_confirmed_total?: number;
+  tracks_rejected_total?: number;
+  tracks_removed_total?: number;
+  tracks_recovered_total?: number;
+  tracks_errors?: number;
+  tracking_ms_last?: number;
+  tracking_ms_avg?: number;
 }
 
 export interface SessionOut {
@@ -132,7 +145,43 @@ export interface SessionOut {
   error: { code: string; message: string } | null;
   connection: string | null;
   stats: SessionStats;
-  settings: { model: string; frame_skip: number; confidence_threshold: number } | null;
+  settings: {
+    model: string;
+    frame_skip: number;
+    confidence_threshold: number;
+    tracking_enabled?: boolean;
+  } | null;
+}
+
+export type TrackState = "TENTATIVE" | "CONFIRMED" | "LOST";
+
+/** A temporary, session-scoped track. `track_id` is NOT a visitor identity. */
+export interface Track {
+  track_id: number;
+  state: TrackState;
+  bbox: [number, number, number, number];
+  /** true = a detection was matched in this frame; false = the box is a motion prediction. */
+  observed: boolean;
+  /** Null for predicted boxes (never invented). */
+  detection_confidence: number | null;
+  last_observed_confidence: number | null;
+  first_seen_ms: number;
+  last_seen_ms: number;
+  age_ms: number;
+  hits: number;
+  missed_updates: number;
+  last_update_frame: number;
+}
+
+export interface TrackingSummary {
+  schema_version: number;
+  enabled: boolean;
+  tentative: number;
+  confirmed: number;
+  lost: number;
+  created_total: number;
+  confirmed_total: number;
+  tracking_ms: number;
 }
 
 /** Header of one binary stream message (see backend app/schemas/detection.py).
@@ -145,6 +194,9 @@ export interface FrameHeader {
   frame_height: number;
   faces: { bbox: [number, number, number, number]; confidence: number }[];
   inference_ms: number;
+  /** Phase 2: the complete current set of TEMPORARY tracks for this session (absent = tracking off). */
+  tracks?: Track[];
+  tracking?: TrackingSummary | null;
   /** Worker wall-clock publish time (epoch ms); for latency measurement only. */
   published_at_ms?: number;
 }

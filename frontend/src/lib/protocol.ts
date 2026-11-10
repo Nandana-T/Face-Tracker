@@ -22,7 +22,8 @@ export function unpackFrame(buffer: ArrayBuffer): { header: FrameHeader; jpeg: U
   if (
     typeof header?.frame_width !== "number" ||
     typeof header?.frame_height !== "number" ||
-    !Array.isArray(header?.faces)
+    !Array.isArray(header?.faces) ||
+    (header.tracks !== undefined && !Array.isArray(header.tracks))
   ) {
     throw new ProtocolError("header missing fields");
   }

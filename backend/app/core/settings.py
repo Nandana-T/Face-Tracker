@@ -10,7 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from app.core.paths import project_root, resolve_path
@@ -57,6 +57,13 @@ class Settings(BaseSettings):
     worker_api_url: str = "ws://127.0.0.1:8000"
     worker_id: str = "worker-1"
 
+    # --- Access control (see app/core/security.py) -------------------------------
+    # Setting ADMIN_PASSWORD turns authentication on (mandatory when APP_ENV=production).
+    admin_password: SecretStr | None = None
+    # Signs bearer tokens and stream tickets. Set it in production so tokens survive restarts.
+    auth_secret: SecretStr | None = None
+    auth_token_ttl_minutes: int = Field(default=480, ge=5, le=10_080)
+
     # --- Files / directories (relative paths resolve against the project root) ---
     config_file: Path = Path("config/config.json")
     log_dir: Path = Path("logs")
@@ -65,6 +72,25 @@ class Settings(BaseSettings):
     log_level: LogLevel | None = Field(
         default=None, description="Overrides logging.level from config.json when set."
     )
+
+    @model_validator(mode="after")
+    def _production_requirements(self) -> Settings:
+        """Refuse to start a production API that is open, weakly secured or CORS-misconfigured."""
+        if self.app_env != "production":
+            return self
+        problems: list[str] = []
+        if self.admin_password is None or len(self.admin_password.get_secret_value()) < 12:
+            problems.append("ADMIN_PASSWORD (min 12 characters) is required")
+        if self.auth_secret is None or len(self.auth_secret.get_secret_value()) < 32:
+            problems.append("AUTH_SECRET (min 32 characters) is required")
+        if self.worker_token is None or len(self.worker_token.get_secret_value()) < 24:
+            problems.append("WORKER_TOKEN (min 24 characters) is required")
+        insecure = [o for o in self.cors_origins if not o.startswith("https://")]
+        if insecure or not self.cors_origins:
+            problems.append("CORS_ORIGINS must list only https:// origins")
+        if problems:
+            raise ValueError("Unsafe production configuration: " + "; ".join(problems))
+        return self
 
     @field_validator("cors_origins", mode="before")
     @classmethod

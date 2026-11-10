@@ -30,7 +30,7 @@ recycle 30 min, `DB_POOL_SIZE` + `DB_MAX_OVERFLOW` (keep below the provider's co
 or any local PostgreSQL. The app runs fully locally without any cloud service.
 
 ### Security notes
-* **BLOCKER:** the password was shared in a chat session and has **not** been rotated. Rotate it in the Supabase dashboard (Project Settings → Database) and update `.env` before running any cloud operation. Migration `0002` has not been applied to Supabase for this reason; Phase 1 development and tests use the embedded local PostgreSQL (`scripts\local-db.ps1`, ADR 0010).
+* **BLOCKER:** the password was shared in a chat session and has **not** been rotated (checked 2026-11-10). Follow `docs/security-runbook.md` (rotate → `scripts\migrate-cloud.ps1 -CheckOnly` → `scripts\migrate-cloud.ps1`) before any cloud operation. Migration `0002` has not been applied to Supabase for this reason; Phase 1 development and tests use the embedded local PostgreSQL (`scripts\local-db.ps1`, ADR 0010).
 * Migration `0001` enables RLS on its table so the Supabase Data API (anon key) cannot read it. Do the same for every future table.
 * Never expose `DATABASE_URL` or the service-role key to the frontend (only `VITE_*` variables reach the browser, and none are secrets).
 
@@ -47,13 +47,18 @@ Supported configurations: (1) all local + hosted DB; (2) hosted frontend + API, 
 HTTPS/WSS: terminated by Vercel/Render; the API uses `--proxy-headers`; no localhost URLs exist in production code (dev proxy target lives only in `vite.config.ts` / `VITE_DEV_PROXY_TARGET`).
 Free web instances should **not** be assumed capable of real-time YOLO + InsightFace inference, and they spin down when idle.
 
+### Production environment (the API refuses to start without these)
+`APP_ENV=production`, `ADMIN_PASSWORD` (≥12), `AUTH_SECRET` (≥32), `WORKER_TOKEN` (≥24), `CORS_ORIGINS` (https only), `DATABASE_URL`. Interactive docs are off in production. **Verified here:** the API in production mode (start-up refusal, 401s, hidden docs, CORS) and the production frontend build (API URL baked in, no secrets in the bundle). **Not verified:** the Dockerfile build, `docker compose`, Render and Vercel deployments (no Docker/WSL here, nothing was deployed); `render.yaml` and `docker-compose.yml` were only checked to be valid YAML.
+
 ## 3. AI worker requirements (measured numbers: `docs/benchmarks/phase1-benchmark.md`)
 * CPU-only: ≥ 4 vCPU, ≥ 4 GB RAM per 1–2 streams at frame_skip 2; GPU recommended for multiple streams.
 * Persistent disk for model weights (`MODELS_DIR`, ~hundreds of MB) and temporary frames.
 * Network: outbound access to PostgreSQL (and object storage). **RTSP**: the camera must be reachable from the worker - a worker on the camera LAN avoids exposing cameras to the internet; if the worker is remote use a VPN (WireGuard/Tailscale) and never port-forward RTSP.
 * Cost: a GPU VM is the dominant cost; a local machine is free for the hackathon demo. Final choice deferred to Phase 7 after benchmarks.
 * The Phase 1 worker needs **no database credentials and no inbound ports**: it dials the API
-  (`WORKER_API_URL`, use `wss://` when hosted) with `WORKER_TOKEN`; the API owns all persistence. Same `config.json`
+  (`WORKER_API_URL`, use `wss://` when hosted) with `WORKER_TOKEN`; the API owns all persistence. Tracking runs in the worker
+  (read from the worker's `config.json`; the API only reads `tracking.enabled` to label sessions, so keep both files identical).
+  It adds well under 1 ms per analysed frame and no dependency or database change, so no deployment step changes in Phase 2. Same `config.json`
   and models directory as the API host's config (sources are resolved on the worker, so RTSP URLs live only in the
   *worker's* environment as `RTSP_*` variables referenced by `url_env`).
 * Start: `python -m app.workers.video_worker` (long-running agent; `--check` = Phase 0 config/DB check).

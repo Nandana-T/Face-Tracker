@@ -12,7 +12,8 @@ export interface StreamHandlers {
 }
 
 export interface StreamOptions {
-  url: string;
+  /** Either a fixed URL or a function returning a fresh one (e.g. with a single-use ticket). */
+  url: string | (() => Promise<string>);
   WebSocketImpl?: typeof WebSocket;
   decode?: (jpeg: Uint8Array) => Promise<ImageBitmap>;
   /** Reconnect delays in ms; the last value repeats. */
@@ -46,9 +47,34 @@ export class LiveStream {
 
   connect(): void {
     if (this.closed) return;
-    const Impl = this.options.WebSocketImpl ?? WebSocket;
     this.handlers.onLink(this.attempt === 0 ? "connecting" : "reconnecting");
-    const ws = new Impl(this.options.url);
+    const { url } = this.options;
+    if (typeof url === "string") {
+      this.open(url);
+      return;
+    }
+    // Tickets are single use: every (re)connection asks for a new one.
+    url().then(
+      (resolved) => !this.closed && this.open(resolved),
+      () => !this.closed && this.scheduleReconnect(),
+    );
+  }
+
+  private scheduleReconnect(): void {
+    if (this.closed || this.ended) {
+      this.handlers.onLink("closed");
+      return;
+    }
+    const delays = this.options.backoffMs ?? [500, 1000, 2000, 4000];
+    const delay = delays[Math.min(this.attempt, delays.length - 1)] ?? 1000;
+    this.attempt += 1;
+    this.handlers.onLink("reconnecting");
+    this.timer = setTimeout(() => this.connect(), delay);
+  }
+
+  private open(url: string): void {
+    const Impl = this.options.WebSocketImpl ?? WebSocket;
+    const ws = new Impl(url);
     ws.binaryType = "arraybuffer";
     this.ws = ws;
     ws.onopen = () => {
@@ -58,15 +84,7 @@ export class LiveStream {
     ws.onmessage = (event) => this.onMessage(event.data as unknown);
     ws.onclose = () => {
       if (this.ws === ws) this.ws = null;
-      if (this.closed || this.ended) {
-        this.handlers.onLink("closed");
-        return;
-      }
-      const delays = this.options.backoffMs ?? [500, 1000, 2000, 4000];
-      const delay = delays[Math.min(this.attempt, delays.length - 1)] ?? 1000;
-      this.attempt += 1;
-      this.handlers.onLink("reconnecting");
-      this.timer = setTimeout(() => this.connect(), delay);
+      this.scheduleReconnect();
     };
     ws.onerror = () => ws.close();
   }

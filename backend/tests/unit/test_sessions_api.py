@@ -596,3 +596,117 @@ def test_api_shutdown_fails_active_sessions(tmp_path: Path, sqlite_engine: Engin
     assert row is not None
     assert row.state == "ERROR"
     assert row.active_slot is None
+
+
+# ---- Phase 2: tracking metadata ----------------------------------------------------------------
+def tracked_frame(session_id: str, frame_id: int, tracks: list[dict[str, Any]]) -> bytes:
+    header = {
+        "session_id": session_id,
+        "frame_id": frame_id,
+        "timestamp_ms": frame_id * 40,
+        "frame_width": 64,
+        "frame_height": 48,
+        "faces": [{"bbox": [1, 2, 30, 40], "confidence": 0.9}],
+        "inference_ms": 1.0,
+        "tracks": tracks,
+        "tracking": {
+            "enabled": True,
+            "tentative": 0,
+            "confirmed": len(tracks),
+            "lost": 0,
+            "created_total": len(tracks),
+            "confirmed_total": len(tracks),
+            "tracking_ms": 0.2,
+        },
+    }
+    return P.pack_frame(header, b"\xff\xd8\xff\xe0fakejpeg")
+
+
+def track(track_id: int = 1, **over: Any) -> dict[str, Any]:
+    base = {
+        "track_id": track_id,
+        "state": "CONFIRMED",
+        "bbox": [1, 2, 30, 40],
+        "observed": True,
+        "detection_confidence": 0.9,
+        "last_observed_confidence": 0.9,
+        "first_seen_ms": 0,
+        "last_seen_ms": 40,
+        "age_ms": 40,
+        "hits": 3,
+        "missed_updates": 0,
+        "last_update_frame": 1,
+    }
+    return {**base, **over}
+
+
+def test_valid_track_metadata_reaches_the_browser_with_the_session_id(env: Env) -> None:
+    worker = FakeWorker(env.client)
+    sid = running_session(env, worker)
+    with env.client.websocket_connect(f"/api/v1/sessions/{sid}/stream") as browser:
+        browser.receive_text()
+        worker.ws.send_bytes(tracked_frame(sid, 1, [track(7)]))
+        header, _ = P.unpack_frame(browser.receive_bytes())
+        assert header["session_id"] == sid
+        assert header["tracks"][0]["track_id"] == 7 and header["tracking"]["confirmed"] == 1
+    worker.close()
+
+
+@pytest.mark.parametrize(
+    "bad_tracks",
+    [
+        [track(1, bbox=[0, 0, 500, 500])],  # outside the 64x48 frame
+        [track(1), track(1)],  # duplicate id
+        [track(1, observed=False)],  # predicted box claiming a confidence
+        [track(1, observed=True, detection_confidence=None)],  # observed without confidence
+        [track(1, state="REMOVED")],
+        [track(0)],
+        [track(1, detection_confidence=1.5)],
+    ],
+)
+def test_malformed_track_metadata_is_dropped_and_the_stream_continues(
+    env: Env, bad_tracks: list[dict[str, Any]]
+) -> None:
+    worker = FakeWorker(env.client)
+    sid = running_session(env, worker)
+    with env.client.websocket_connect(f"/api/v1/sessions/{sid}/stream") as browser:
+        browser.receive_text()
+        worker.ws.send_bytes(tracked_frame(sid, 1, bad_tracks))
+        worker.ws.send_bytes(tracked_frame(sid, 2, [track(1)]))
+        header, _ = P.unpack_frame(browser.receive_bytes())
+        assert header["frame_id"] == 2  # the invalid frame never reached the browser
+    worker.close()
+
+
+def test_tracks_of_another_session_never_reach_the_browser(env: Env) -> None:
+    worker = FakeWorker(env.client)
+    sid = running_session(env, worker)
+    with env.client.websocket_connect(f"/api/v1/sessions/{sid}/stream") as browser:
+        browser.receive_text()
+        worker.ws.send_bytes(tracked_frame("e" * 32, 1, [track(1)]))
+        worker.ws.send_bytes(tracked_frame(sid, 2, [track(9)]))
+        header, _ = P.unpack_frame(browser.receive_bytes())
+        assert header["session_id"] == sid and header["tracks"][0]["track_id"] == 9
+    worker.close()
+
+
+def test_tracking_counters_are_persisted_in_the_session_summary(env: Env) -> None:
+    worker = FakeWorker(env.client)
+    sid = running_session(env, worker)
+    stats = {
+        "frames_read": 90,
+        "frames_processed": 30,
+        "tracks_confirmed": 2,
+        "tracks_created_total": 5,
+        "tracks_confirmed_total": 3,
+        "tracks_rejected_total": 2,
+        "tracks_removed_total": 1,
+        "tracking_ms_avg": 0.4,
+    }
+    worker.send({"type": P.MSG_ENDED, "session_id": sid, "state": "COMPLETED", "stats": stats})
+    wait_for(lambda: env.state(sid) == "COMPLETED")
+    body = env.get(sid)
+    assert body["stats"]["tracks_created_total"] == 5
+    assert body["stats"]["tracks_confirmed_total"] == 3
+    assert body["stats"]["tracks_rejected_total"] == 2
+    worker.close()

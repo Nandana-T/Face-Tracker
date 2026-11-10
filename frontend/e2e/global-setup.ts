@@ -1,7 +1,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { prepareE2e, python } from "./prepare";
+import { E2E_PASSWORD, prepareE2e, python } from "./prepare";
 
 const root = path.resolve(__dirname, "..", "..");
 export const PID_FILE = path.join(root, "temp", "e2e-stack.pid");
@@ -63,9 +63,19 @@ export default async function globalSetup() {
   await until("the dev server", async () => (await fetch(WEB)).ok, 60_000);
 
   await until("the API", async () => (await fetch(`${API}/health`)).ok, 90_000);
+  // The API requires sign-in in this suite (ADMIN_PASSWORD is set): log in to look at the worker.
+  const login = await fetch(`${API}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password: E2E_PASSWORD }),
+  });
+  const { access_token } = (await login.json()) as { access_token: string };
   await until(
     "the video worker to connect",
-    async () => ((await (await fetch(`${API}/sources`)).json()) as { worker: { connected: boolean } }).worker.connected,
+    async () => {
+      const r = await fetch(`${API}/sources`, { headers: { Authorization: `Bearer ${access_token}` } });
+      return ((await r.json()) as { worker: { connected: boolean } }).worker.connected;
+    },
     60_000,
   );
 }

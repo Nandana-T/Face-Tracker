@@ -1,5 +1,6 @@
 import { useLocation } from "react-router-dom";
 import { titleForPath } from "@/app/navigation";
+import { SignOutButton } from "@/features/auth/auth-gate";
 import { Brand } from "./brand";
 import { ConnectionIndicators } from "./connection-indicators";
 import { MobileNav } from "./mobile-nav";
@@ -20,6 +21,7 @@ export function TopBar() {
         <div className="hidden sm:block">
           <ConnectionIndicators />
         </div>
+        <SignOutButton />
         <ThemeToggle />
       </div>
     </header>

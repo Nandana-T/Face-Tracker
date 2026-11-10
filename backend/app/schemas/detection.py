@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.tracking import TrackingSummary, TrackOut
+
 
 class FaceBox(BaseModel):
     bbox: tuple[int, int, int, int]
@@ -36,10 +38,16 @@ class DetectionResult(BaseModel):
     frame_height: int = Field(gt=0)
     faces: list[FaceBox]
     inference_ms: float = Field(ge=0)
+    # Phase 2 (additive): null/empty when tracking is disabled. `faces` stays the raw detections.
+    tracks: list[TrackOut] = Field(default_factory=list)
+    tracking: TrackingSummary | None = None
 
     @model_validator(mode="after")
     def _inside_frame(self) -> DetectionResult:
         for face in self.faces:
             if face.bbox[2] > self.frame_width or face.bbox[3] > self.frame_height:
                 raise ValueError("bbox exceeds frame dimensions")
+        for track in self.tracks:
+            if track.bbox[2] > self.frame_width or track.bbox[3] > self.frame_height:
+                raise ValueError("track bbox exceeds frame dimensions")
         return self

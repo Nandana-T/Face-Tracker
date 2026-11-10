@@ -39,7 +39,7 @@ describe("/live page shell", () => {
     renderApp("/live");
     expect(await screen.findByRole("heading", { level: 1, name: "Live Monitoring" })).toBeInTheDocument();
     expect(await screen.findByTestId("viewport")).toBeInTheDocument();
-    expect(screen.getByText(/Face detection only/)).toBeInTheDocument();
+    expect(screen.getByText(/Face detection and temporary tracking/)).toBeInTheDocument();
   });
 });
 

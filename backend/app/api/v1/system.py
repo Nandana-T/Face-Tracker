@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from app.api.deps import ConfigDep, EngineDep, SessionDep, SettingsDep
+from app.core.security import require_auth
 from app.schemas.system import (
     HealthResponse,
     PublicConfigResponse,
@@ -37,7 +38,10 @@ def ready(engine: EngineDep, settings: SettingsDep) -> JSONResponse:
 
 
 @router.get(
-    "/system/status", response_model=SystemStatusResponse, summary="Structured system status"
+    "/system/status",
+    response_model=SystemStatusResponse,
+    summary="Structured system status",
+    dependencies=[Depends(require_auth)],
 )
 def system_status(
     request: Request, session: SessionDep, settings: SettingsDep, config: ConfigDep
@@ -47,6 +51,11 @@ def system_status(
     )
 
 
-@router.get("/config", response_model=PublicConfigResponse, summary="Sanitised configuration")
+@router.get(
+    "/config",
+    response_model=PublicConfigResponse,
+    summary="Sanitised configuration",
+    dependencies=[Depends(require_auth)],
+)
 def get_config(settings: SettingsDep, config: ConfigDep) -> PublicConfigResponse:
     return system_service.public_config(settings, config)

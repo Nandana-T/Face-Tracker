@@ -29,6 +29,7 @@ from app.vision.detection.model_registry import (
 from app.vision.detection.yolo_onnx import YoloOnnxFaceDetector
 from app.vision.sources.interfaces import SourceError, VideoSource
 from app.vision.sources.registry import build_source
+from app.vision.tracking.tracker import FaceByteTracker, TrackerConfig
 from app.workers import protocol as P
 from app.workers.pipeline import Outcome, PipelineSettings, ProcessingPipeline
 
@@ -341,6 +342,26 @@ class WorkerAgent:
                 outcome = Outcome("ERROR", "model_unavailable", str(exc))
                 return
             cfg, st = self.config, self.config.stream
+            tr = cfg.tracking
+            # One tracker per session: track ids restart and nothing leaks between sessions.
+            tracker = (
+                FaceByteTracker(
+                    TrackerConfig(
+                        high_confidence=tr.high_confidence,
+                        confirm_hits=tr.confirm_hits,
+                        tentative_timeout_seconds=tr.tentative_timeout_seconds,
+                        max_missing_seconds=tr.max_missing_seconds,
+                        match_iou=tr.match_iou,
+                        low_match_iou=tr.low_match_iou,
+                        lost_match_iou=tr.lost_match_iou,
+                        box_buffer=tr.box_buffer,
+                        lost_velocity_decay_per_second=tr.lost_velocity_decay_per_second,
+                        max_tracks=tr.max_tracks,
+                    )
+                )
+                if tr.enabled
+                else None
+            )
             pipeline = ProcessingPipeline(
                 source,
                 detector,
@@ -360,6 +381,7 @@ class WorkerAgent:
                 on_stats=lambda s: self._send(
                     {"type": P.MSG_STATS, "session_id": active.session_id, "stats": s}
                 ),
+                tracker=tracker,
             )
             active.pipeline = pipeline
             if active.stop_requested:

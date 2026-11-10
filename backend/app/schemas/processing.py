@@ -54,6 +54,22 @@ class SessionStats(BaseModel):
     frame_height: int = 0
     source_fps: float = 0
     elapsed_seconds: float = 0
+    # Phase 2 tracking counters: temporary session-scoped tracks, NOT visitors. All zero when
+    # tracking is disabled. `tracks_created_total` counts every track ever started, including
+    # tentative ones later rejected, so it is not a number of people either.
+    tracks_enabled: int = 0
+    tracks_confirmed: int = 0
+    tracks_tentative: int = 0
+    tracks_lost: int = 0
+    tracks_created_total: int = 0
+    tracks_confirmed_total: int = 0
+    tracks_rejected_total: int = 0
+    tracks_removed_total: int = 0
+    tracks_recovered_total: int = 0
+    tracks_invalid_detections: int = 0
+    tracks_errors: int = 0
+    tracking_ms_last: float = 0
+    tracking_ms_avg: float = 0
 
 
 class SessionError(BaseModel):
@@ -65,6 +81,7 @@ class SessionSettings(BaseModel):
     model: str
     frame_skip: int
     confidence_threshold: float
+    tracking_enabled: bool = False
 
 
 class SessionOut(BaseModel):

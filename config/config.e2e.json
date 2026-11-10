@@ -47,7 +47,17 @@
     "similarity_threshold": 0.55
   },
   "tracking": {
-    "max_missing_seconds": 2
+    "enabled": true,
+    "high_confidence": 0.6,
+    "confirm_hits": 3,
+    "tentative_timeout_seconds": 0.5,
+    "max_missing_seconds": 2,
+    "match_iou": 0.2,
+    "low_match_iou": 0.3,
+    "lost_match_iou": 0.1,
+    "box_buffer": 0.1,
+    "lost_velocity_decay_per_second": 1.0,
+    "max_tracks": 200
   },
   "logging": {
     "level": "INFO",

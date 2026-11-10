@@ -152,7 +152,29 @@ class RecognitionConfig(_Section):
 
 
 class TrackingConfig(_Section):
+    """Temporary, session-scoped face tracks (never visitor identities). See
+    docs/phase-2-report.md for the meaning and calibration of every value."""
+
+    enabled: bool = True
+    # Only detections scoring at least this can START a track; weaker ones may only extend one.
+    high_confidence: float = Field(default=0.6, ge=0, le=1)
+    # Observed updates needed for TENTATIVE -> CONFIRMED.
+    confirm_hits: int = Field(default=3, ge=1, le=30)
+    # A TENTATIVE track with no detection for this long is dropped (a "rejected" track).
+    tentative_timeout_seconds: float = Field(default=0.5, gt=0, le=60)
+    # A LOST track that is not re-detected within this time is REMOVED (the id is never reused).
     max_missing_seconds: float = Field(default=2, gt=0, le=600)
+    # Minimum IoU between a track's predicted box and a detection to associate them.
+    match_iou: float = Field(default=0.2, gt=0, le=1)
+    low_match_iou: float = Field(default=0.3, gt=0, le=1)
+    # Lower gate for re-acquiring a LOST track (its predicted position is less certain).
+    # Association uses IoU of boxes grown by this fraction of their size per side (buffered IoU);
+    # it keeps very small, fast faces matchable. 0 = plain IoU.
+    box_buffer: float = Field(default=0.1, ge=0, le=1)
+    lost_match_iou: float = Field(default=0.1, gt=0, le=1)
+    # Per-second damping of a LOST track's velocity (0 = keep extrapolating at full speed).
+    lost_velocity_decay_per_second: float = Field(default=1.0, ge=0, le=20)
+    max_tracks: int = Field(default=200, ge=1, le=5000)
 
 
 class LoggingConfig(_Section):

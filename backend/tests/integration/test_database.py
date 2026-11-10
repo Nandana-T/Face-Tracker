@@ -107,3 +107,110 @@ def test_tls_in_use_for_hosted_connections(isolated_schema: tuple[Settings, Engi
     if "supabase" in host or "sslmode=require" in host:
         assert ssl is True
     logging.getLogger(__name__).info("ssl=%s", ssl)
+
+
+def test_migrations_are_repeatable_and_never_destroy_existing_data(
+    isolated_schema: tuple[Settings, Engine],
+) -> None:
+    """Upgrading again (or in steps) keeps rows written under earlier revisions."""
+    _, engine = isolated_schema
+    cfg = alembic_cfg(engine)
+    command.upgrade(cfg, "0001")
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO app_metadata (key, value) VALUES ('keep', 'me')"))
+
+    command.upgrade(cfg, "head")  # 0001 -> 0002 with data present
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO processing_sessions (id, source_id, source_label, source_type, state, "
+                "frames_read, frames_processed, frames_skipped, frames_dropped, corrupt_frames, "
+                "detections_total, max_faces_in_frame) VALUES "
+                "('s1', 'a', 'A', 'file', 'COMPLETED', "
+                "10, 4, 6, 0, 0, 3, 1)"
+            )
+        )
+
+    for _ in range(3):  # re-running is a no-op
+        command.upgrade(cfg, "head")
+    with engine.connect() as conn:
+        assert (
+            conn.execute(text("SELECT value FROM app_metadata WHERE key = 'keep'")).scalar() == "me"
+        )
+        assert conn.execute(text("SELECT count(*) FROM processing_sessions")).scalar() == 1
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0002"
+
+    # Rolling the newest migration back and forward keeps everything older
+    # (it only drops what 0002 created).
+    command.downgrade(cfg, "0001")
+    with engine.connect() as conn:
+        assert (
+            conn.execute(text("SELECT value FROM app_metadata WHERE key = 'keep'")).scalar() == "me"
+        )
+    command.upgrade(cfg, "head")
+    assert "processing_sessions" in inspect(engine).get_table_names()
+
+
+def test_session_table_enforces_its_invariants_on_postgresql(
+    isolated_schema: tuple[Settings, Engine],
+) -> None:
+    from sqlalchemy.exc import IntegrityError
+
+    _, engine = isolated_schema
+    command.upgrade(alembic_cfg(engine), "head")
+    insert = (
+        "INSERT INTO processing_sessions (id, source_id, source_label, source_type, state, "
+        "active_slot, "
+        "frames_read, frames_processed, frames_skipped, frames_dropped, corrupt_frames, "
+        "detections_total, max_faces_in_frame) VALUES "
+        "(:id, 'a', 'A', 'file', :state, :slot, 0,0,0,0,0,0,0)"
+    )
+    with engine.begin() as conn:
+        conn.execute(text(insert), {"id": "a1", "state": "RUNNING", "slot": 1})
+    with pytest.raises(IntegrityError), engine.begin() as conn:  # a second active session
+        conn.execute(text(insert), {"id": "a2", "state": "STARTING", "slot": 1})
+    with pytest.raises(IntegrityError), engine.begin() as conn:  # unknown state
+        conn.execute(text(insert), {"id": "a3", "state": "BOGUS", "slot": None})
+    with engine.begin() as conn:  # any number of finished sessions is fine
+        conn.execute(text(insert), {"id": "a4", "state": "COMPLETED", "slot": None})
+        conn.execute(text(insert), {"id": "a5", "state": "ERROR", "slot": None})
+
+
+def test_tracking_counters_round_trip_through_postgresql_summary(
+    isolated_schema: tuple[Settings, Engine],
+) -> None:
+    """Phase 2 needs no migration: the tracks_* counters live in the existing JSON `summary`."""
+    from sqlalchemy.orm import sessionmaker
+
+    from app.services.session_store import SessionStore
+
+    _, engine = isolated_schema
+    command.upgrade(alembic_cfg(engine), "head")
+    store = SessionStore(sessionmaker(engine, expire_on_commit=False))
+    row = store.create_active("clip", "Clip", "file", "worker-1", {"tracking_enabled": True})
+    store.save_stats(
+        row.id,
+        {
+            "frames_processed": 30,
+            "tracks_created_total": 9,
+            "tracks_confirmed_total": 4,
+            "tracks_rejected_total": 3,
+            "tracking_ms_avg": 0.31,
+            "not_a_number": "dropped",
+        },
+    )
+    got = store.get(row.id)
+    assert got is not None and got.summary is not None
+    assert got.summary["tracks_created_total"] == 9
+    assert got.summary["tracks_rejected_total"] == 3
+    assert got.summary["tracking_ms_avg"] == pytest.approx(0.31)
+    assert "not_a_number" not in got.summary
+    assert got.settings_snapshot == {"tracking_enabled": True}
+    with engine.connect() as conn:  # and it is queryable as JSON in PostgreSQL itself
+        raw = conn.execute(
+            text(
+                "SELECT summary->>'tracks_confirmed_total' FROM processing_sessions WHERE id = :i"
+            ),
+            {"i": row.id},
+        ).scalar()
+    assert raw == "4"

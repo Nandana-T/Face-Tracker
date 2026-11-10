@@ -26,6 +26,7 @@ Pinned in `app/vision/detection/model_registry.py`; fetched only by `scripts\dow
   drop sub-pixel boxes → OpenCV NMS (`iou_threshold`) → cap at `max_faces`.
 
 ## Licence - read before commercial use
+> **Superseded by [ADR 0011](0011-model-licence-assessment.md)**, which records the full inspection and the decision. Summary: treat as AGPL-3.0 / non-commercial.
 * The Hugging Face model card states `license: apache-2.0`.
 * The ONNX file's own metadata says `AGPL-3.0` (Ultralytics), and the architecture/export tooling is Ultralytics
   YOLO11 (AGPL-3.0, with a commercial licence available).

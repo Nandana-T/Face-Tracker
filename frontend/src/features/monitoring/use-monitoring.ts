@@ -7,9 +7,10 @@ import {
   type FrameHeader,
   type SessionOut,
   type SessionStats,
+  type Track,
 } from "@/lib/api-types";
 import { LiveStream, type LinkState } from "@/lib/live-stream";
-import type { VideoCanvasHandle } from "./video-canvas";
+import type { OverlayOptions, VideoCanvasHandle } from "./video-canvas";
 
 const SOURCES_POLL_MS = 5000;
 const SESSION_POLL_MS = 2000;
@@ -23,6 +24,12 @@ export interface LatestFrame {
   faces: number;
   bestConfidence: number | null;
   inferenceMs: number;
+}
+
+export interface SelectedTrack {
+  track: Track;
+  /** The track is no longer in the latest frame (removed or the session ended). */
+  ended: boolean;
 }
 
 export function isActive(session: SessionOut | null): boolean {
@@ -44,6 +51,13 @@ export function useMonitoring(canvas: RefObject<VideoCanvasHandle | null>) {
   const [latest, setLatest] = useState<LatestFrame | null>(null);
   const [streamFps, setStreamFps] = useState<number | null>(null);
   const [startError, setStartError] = useState<ApiError | null>(null);
+  const [tracks, setTracks] = useState<Track[]>([]);
+  const [trackingOn, setTrackingOn] = useState(false);
+  const [showOverlay, setShowOverlayState] = useState(true);
+  const [showLabels, setShowLabelsState] = useState(true);
+  const overlayRef = useRef<OverlayOptions>({ show: true, labels: true, selectedId: null });
+  const [selected, setSelected] = useState<SelectedTrack | null>(null);
+  const selectedId = useRef<number | null>(null);
 
   const sources = useQuery({
     queryKey: ["processing", "sources"],
@@ -66,7 +80,9 @@ export function useMonitoring(canvas: RefObject<VideoCanvasHandle | null>) {
       detach();
       arrivals.current = [];
       const s = new LiveStream(
-        { url: streamUrl(id) },
+        {
+          url: async () => streamUrl(id, (await api.streamTicket(id)).ticket),
+        },
         {
           onSession: applySession,
           onStats: (stats: SessionStats) =>
@@ -119,6 +135,37 @@ export function useMonitoring(canvas: RefObject<VideoCanvasHandle | null>) {
     refetchInterval: SESSION_POLL_MS,
   });
 
+  // Overlay choices go straight to the canvas (imperative: no per-frame React renders).
+  const pushOverlay = useCallback(
+    (patch: Partial<OverlayOptions>) => {
+      overlayRef.current = { ...overlayRef.current, ...patch };
+      canvas.current?.setOverlay(overlayRef.current);
+    },
+    [canvas],
+  );
+  const selectTrack = useCallback(
+    (track: Track | null) => {
+      selectedId.current = track ? track.track_id : null;
+      setSelected(track ? { track, ended: false } : null);
+      pushOverlay({ selectedId: selectedId.current });
+    },
+    [pushOverlay],
+  );
+  const setShowOverlay = useCallback(
+    (show: boolean) => {
+      setShowOverlayState(show);
+      pushOverlay({ show });
+    },
+    [pushOverlay],
+  );
+  const setShowLabels = useCallback(
+    (labels: boolean) => {
+      setShowLabelsState(labels);
+      pushOverlay({ labels });
+    },
+    [pushOverlay],
+  );
+
   // Copy the newest frame's numbers into React state (called on a timer, never per frame).
   const lastSnapshotId = useRef(-1);
   const snapshot = useCallback(() => {
@@ -139,6 +186,16 @@ export function useMonitoring(canvas: RefObject<VideoCanvasHandle | null>) {
         bestConfidence: h.faces.length ? Math.max(...h.faces.map((f) => f.confidence)) : null,
         inferenceMs: h.inference_ms,
       });
+      const list = h.tracks ?? [];
+      setTracks(list);
+      setTrackingOn(!!h.tracking);
+      const id = selectedId.current;
+      if (id !== null) {
+        const hit = list.find((t) => t.track_id === id);
+        setSelected((prev) =>
+          hit ? { track: hit, ended: false } : prev ? { track: prev.track, ended: true } : null,
+        );
+      }
     }
   }, []);
 
@@ -168,6 +225,9 @@ export function useMonitoring(canvas: RefObject<VideoCanvasHandle | null>) {
       lastHeader.current = null;
       lastSnapshotId.current = -1;
       setLatest(null);
+      setTracks([]);
+      setTrackingOn(false);
+      selectTrack(null);
       setStreamFps(null);
       setSession(created);
       attach(created.id);
@@ -206,5 +266,13 @@ export function useMonitoring(canvas: RefObject<VideoCanvasHandle | null>) {
     stop,
     startError,
     active,
+    tracks,
+    trackingOn,
+    showOverlay,
+    setShowOverlay,
+    showLabels,
+    setShowLabels,
+    selected,
+    selectTrack,
   };
 }

@@ -27,10 +27,15 @@ function recordingContext(): CanvasRenderingContext2D {
     fillRect: record("fillRect"),
     fillText: record("fillText"),
     measureText: (text: string) => ({ width: text.length * 7 }),
-    set lineWidth(_v: number) {},
+    setLineDash: record("setLineDash"),
+    set lineWidth(v: number) {
+      canvasCalls.push({ op: "lineWidth", args: [v] });
+    },
     set font(_v: string) {},
     set textBaseline(_v: string) {},
-    set strokeStyle(_v: string) {},
+    set strokeStyle(v: string) {
+      canvasCalls.push({ op: "strokeStyle", args: [v] });
+    },
     set fillStyle(_v: string) {},
   } as unknown as CanvasRenderingContext2D;
 }

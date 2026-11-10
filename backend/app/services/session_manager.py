@@ -21,6 +21,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from pydantic import ValidationError
+
 from app.core.config import AppConfig
 from app.core.errors import AppError
 from app.models.processing_session import ProcessingSession
@@ -33,6 +35,7 @@ from app.schemas.processing import (
     SourcesResponse,
     WorkerOut,
 )
+from app.schemas.tracking import TrackingFrameMeta
 from app.services.session_store import (
     ActiveSessionExists,
     InvalidTransition,
@@ -208,6 +211,7 @@ class SessionManager:
                 model=snap.get("model", ""),
                 frame_skip=snap.get("frame_skip", 0),
                 confidence_threshold=snap.get("confidence_threshold", 0),
+                tracking_enabled=bool(snap.get("tracking_enabled", False)),
             )
             if snap
             else None,
@@ -276,6 +280,7 @@ class SessionManager:
                         "frame_skip": d.frame_skip,
                         "confidence_threshold": d.confidence_threshold,
                         "input_size": d.input_size,
+                        "tracking_enabled": self._config.tracking.enabled,
                     },
                 )
             except ActiveSessionExists as exc:
@@ -441,6 +446,16 @@ class SessionManager:
             return
         if header.get("session_id") != live.id:
             return
+        if header.get("tracks"):
+            # The API never tracks, but it does refuse malformed track metadata so a buggy worker
+            # cannot feed the browser inconsistent data.
+            try:
+                TrackingFrameMeta.model_validate(header)
+            except ValidationError as exc:
+                logger.warning(
+                    "Dropping frame: invalid tracking metadata (%d errors)", exc.error_count()
+                )
+                return
         for sub in list(live.subscribers):
             sub.push_frame(data)
 

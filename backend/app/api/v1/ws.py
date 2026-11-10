@@ -4,10 +4,10 @@ Authorization boundary
 * /worker/ws  - requires ``Authorization: Bearer <WORKER_TOKEN>`` (constant-time comparison).
   With no token configured every connection is refused. Only one worker is active; a new one
   replaces the old.
-* /sessions/{id}/stream - browsers. There are no user accounts in Phase 1, so access is limited
-  by (a) an Origin allow-list (the configured CORS origins) and (b) an unguessable 128-bit session
-  id. This is NOT user authentication; do not expose the API publicly with a real camera until
-  an auth phase exists (documented in docs/phase-1-report.md).
+* /sessions/{id}/stream - browsers. When authentication is enabled (mandatory in production) a
+  valid single-use ticket for this session is required (see app/core/security.py), in addition to
+  the Origin allow-list. With no ADMIN_PASSWORD (local development only) it stays open, protected
+  by the unguessable 128-bit session id alone.
 """
 
 from __future__ import annotations
@@ -93,6 +93,12 @@ def _origin_allowed(websocket: WebSocket) -> bool:
 @router.websocket("/sessions/{session_id}/stream")
 async def session_stream(websocket: WebSocket, session_id: str) -> None:
     if not _origin_allowed(websocket):
+        await websocket.close(code=1008)
+        return
+    # Browsers cannot send an Authorization header on a WebSocket, hence the single-use ticket.
+    if not websocket.app.state.auth.consume_ticket(
+        websocket.query_params.get("ticket"), session_id
+    ):
         await websocket.close(code=1008)
         return
     mgr: SessionManager = websocket.app.state.sessions

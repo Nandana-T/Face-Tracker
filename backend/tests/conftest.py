@@ -84,10 +84,32 @@ def client_no_db(app_no_db: FastAPI) -> Iterator[TestClient]:
         yield client
 
 
+def _embedded_postgres_url() -> str:
+    """Start (or reuse) the embedded local PostgreSQL in storage/pgdata and return its URL."""
+    import pgserver
+
+    from app.core.paths import project_root
+
+    server = pgserver.get_server(project_root() / "storage" / "pgdata", cleanup_mode=None)  # type: ignore[attr-defined]
+    return str(server.get_uri())
+
+
 @pytest.fixture(scope="session")
 def test_database_url() -> str:
-    url = os.environ.get("TEST_DATABASE_URL")
-    return url if url else get_settings().database_url.get_secret_value()
+    """The database integration tests may use - never the development/production one.
+
+    ``TEST_DATABASE_URL`` if set; otherwise the embedded local PostgreSQL. There is deliberately no
+    fallback to ``DATABASE_URL`` any more, and a TEST_DATABASE_URL equal to it is refused.
+    """
+    from tests.db_safety import check_test_database
+
+    url = os.environ.get("TEST_DATABASE_URL") or _embedded_postgres_url()
+    check_test_database(
+        url,
+        get_settings().database_url.get_secret_value(),
+        allow_hosted=os.environ.get("ALLOW_HOSTED_TEST_DB") == "1",
+    )
+    return url
 
 
 @pytest.fixture

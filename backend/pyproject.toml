@@ -60,7 +60,7 @@ ignore = ["S101"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S105", "S106", "S108"]
 # Developer tools: long prose lines in the report text, deliberate subprocess calls (nvidia-smi/powershell).
-"benchmarks/**" = ["E501", "S603", "S607", "E741"]
+"benchmarks/**" = ["E501", "S603", "S607", "S311", "E741"]
 
 [tool.mypy]
 python_version = "3.12"

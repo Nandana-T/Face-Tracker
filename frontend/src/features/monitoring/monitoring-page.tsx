@@ -18,6 +18,7 @@ import { Card } from "@/components/ui/card";
 import { ApiError } from "@/lib/api";
 import { DetectionSummary } from "./detection-summary";
 import { SourceControls } from "./source-controls";
+import { TrackingPanel } from "./tracking-panel";
 import { describeView, sourceTypeLabel, type ViewKey } from "./status-copy";
 import { useMonitoring } from "./use-monitoring";
 import { VideoCanvas, type VideoCanvasHandle } from "./video-canvas";
@@ -80,7 +81,8 @@ export function MonitoringPage() {
   const Icon = overlayIcon[view.key];
   const spinning = view.key === "connecting" || view.key === "stopping";
   const canvasLabel = m.latest
-    ? `Live video preview, ${m.latest.faces} ${m.latest.faces === 1 ? "face" : "faces"} detected in the latest analysed frame`
+    ? `Live video preview, ${m.latest.faces} ${m.latest.faces === 1 ? "face" : "faces"} detected in the latest analysed frame` +
+      (m.trackingOn ? `, ${m.tracks.length} ${m.tracks.length === 1 ? "track" : "tracks"} shown` : "")
     : "Video preview (no frames yet)";
 
   return (
@@ -115,6 +117,7 @@ export function MonitoringPage() {
                 ref={canvasRef}
                 label={canvasLabel}
                 dimmed={!!m.session && !m.active}
+                onTrackClick={m.selectTrack}
               />
               {/* One message at a time: "wait" lets the old one finish leaving before the next enters,
                   so the same heading never appears twice (visually or for screen readers). */}
@@ -174,9 +177,11 @@ export function MonitoringPage() {
           </Card>
 
           <p className="rounded-md border border-dashed px-4 py-3 text-xs text-muted-foreground">
-            Face detection only: boxes show where a face-like region was found in a frame. It does
-            not identify anyone, track people between frames or count unique visitors - those come in
-            later phases. Frames are shown live and are not stored.
+            Face detection and temporary tracking: boxes show where a face-like region was found,
+            and a &ldquo;#id&rdquo; follows the same face from frame to frame within this session.
+            Solid boxes were detected in the frame; dashed boxes are predicted positions. A track id
+            is not a person&rsquo;s identity: it does not identify anyone, is not kept across
+            sessions, and is not a unique-visitor count. Frames are shown live and are not stored.
           </p>
         </div>
 
@@ -194,6 +199,17 @@ export function MonitoringPage() {
             stopping={m.stop.isPending || m.session?.state === "STOPPING"}
             onStart={() => selected && m.start.mutate(selected)}
             onStop={() => m.session && m.stop.mutate(m.session.id)}
+          />
+          <TrackingPanel
+            session={m.session}
+            tracks={m.tracks}
+            trackingOn={m.trackingOn}
+            showOverlay={m.showOverlay}
+            onShowOverlay={m.setShowOverlay}
+            showLabels={m.showLabels}
+            onShowLabels={m.setShowLabels}
+            selected={m.selected}
+            onSelect={m.selectTrack}
           />
           <DetectionSummary session={m.session} latest={m.latest} streamFps={m.streamFps} />
         </div>

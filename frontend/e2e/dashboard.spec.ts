@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { stubApi } from "./helpers";
+import { E2E_PASSWORD } from "./prepare";
 
 const indicators = (page: Page) =>
   page.getByTestId("connection-indicators").first();
@@ -83,6 +84,8 @@ test("@live UI matches the real backend through the dev proxy", async ({ page, r
   const ready = await request.get("http://127.0.0.1:8000/api/v1/ready");
   const expectedDb = ready.status() === 200 ? "Connected" : "Unavailable";
   await page.goto("/");
+  await page.getByLabel("Password").fill(E2E_PASSWORD); // the real API requires sign-in
+  await page.getByRole("button", { name: "Sign in" }).click();
   await expect(indicators(page).getByRole("status", { name: "API: Connected" })).toBeVisible();
   await expect(indicators(page).getByRole("status", { name: `Database: ${expectedDb}` })).toBeVisible({
     timeout: 30_000,

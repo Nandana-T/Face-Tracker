@@ -21,6 +21,7 @@ from app.core.config import AppConfig, load_app_config
 from app.core.errors import register_exception_handlers
 from app.core.logging import setup_logging
 from app.core.middleware import RequestIdMiddleware
+from app.core.security import AuthService
 from app.core.settings import Settings, get_settings
 from app.db.session import create_db_engine, create_session_factory
 from app.services.session_manager import SessionManager
@@ -71,9 +72,10 @@ def create_app(
         title="Katomaran AI API",
         version=settings.app_version,
         description="Intelligent Face Tracker & Visitor Analytics",
-        docs_url="/api/docs",
+        # The interactive docs and schema describe every route: not served in production.
+        docs_url=None if settings.app_env == "production" else "/api/docs",
         redoc_url=None,
-        openapi_url="/api/openapi.json",
+        openapi_url=None if settings.app_env == "production" else "/api/openapi.json",
         lifespan=lifespan,
     )
     app.state.settings = settings
@@ -81,6 +83,7 @@ def create_app(
     app.state.engine = engine
     app.state.session_factory = create_session_factory(engine)
     app.state.started_at = time.monotonic()
+    app.state.auth = AuthService(settings)
     app.state.sessions = SessionManager(config, SessionStore(app.state.session_factory))
 
     register_exception_handlers(app)
