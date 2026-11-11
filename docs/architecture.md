@@ -140,6 +140,16 @@ API:   VisitManager (pure state machine, video time)     IdentityManager (Phase 
 * Rules: a visit opens when a track bound to a visitor is CONFIRMED and observed (entry time = earliest sighting of the track); a track disappearing is not an exit; absence is measured in **video time** between processed frames, gaps above `visits.max_frame_gap_seconds` are blind time; the exit time is the **last sighting**; end of file / manual stop ⇒ *observation ended*; worker loss / API shutdown / source failure ⇒ *interrupted* (no duration). Full argument: [ADR 0014](decisions/0014-visit-lifecycle-and-event-delivery.md), [phase-4-report](phase-4-report.md).
 * The API process owns the lifecycle (single-API design, like sessions). Events are exactly-once as **logical records** (constraints + deterministic ids); delivery of the image and the log line is retried until consistent. Atomicity across PostgreSQL, files and the log is **not** claimed.
 
+## Analytics (Phase 5)
+```
+PostgreSQL (visitors, visits, visit_events, processing_sessions, identity_associations)
+   └─ AnalyticsService  - SQL aggregates only, one scope [since, until) x source x session
+        └─ /analytics/overview|timeline|sources|sessions|coverage|recent|reconciliation   (REST, authenticated)
+SessionManager ──"analytics_changed" notice (no counts)──► /analytics/stream (single-use ticket) ──► browser
+browser: TanStack Query invalidation + refetch (+ refetch on reconnect, 20 s poll)
+```
+No analytics store, no cache, no second counter: every number is re-read from PostgreSQL. Definitions (identities vs people, returning, active vs stale, erasure) are in [phase-5-report.md](phase-5-report.md) and [ADR 0015](decisions/0015-counting-semantics.md). The independent recount (`reconcile`) is report-only.
+
 ## Measured resource usage
 See [`benchmarks/phase1-benchmark.md`](benchmarks/phase1-benchmark.md): one real-time stream at the shipped defaults uses
 ≈ 7 % of an i5-1240P and ≈ 230 MB RSS; ≈ 31 ms inference per frame. GPU: not measured (no usable GPU). Tracking cost (measured in Phase 2): [`benchmarks/phase2-tracking.md`](benchmarks/phase2-tracking.md). Phase 3 embedding cost

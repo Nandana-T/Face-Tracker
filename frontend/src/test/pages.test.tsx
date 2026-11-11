@@ -22,16 +22,6 @@ describe("overview empty states (no invented data)", () => {
   });
 });
 
-describe.each([
-  ["/analytics", "Analytics", "No analytics available"],
-])("%s placeholder page", (path, heading, empty) => {
-  it("renders heading and empty state", async () => {
-    renderApp(path);
-    expect(await screen.findByRole("heading", { level: 1, name: heading })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: empty })).toBeInTheDocument();
-  });
-});
-
 describe("/live page shell", () => {
   it("renders the monitoring console instead of a placeholder", async () => {
     renderApp("/live");

@@ -2,9 +2,10 @@
 
 Detects, recognises, registers, tracks and counts unique visitors from video files and RTSP streams, with a real-time dashboard.
 
-> **Current state: Phase 4 (visit lifecycle, entry/exit events, durable persistence) on top of Phases 0-3, awaiting approval.** Everything marked ✅ exists and is tested.
+> **Current state: Phase 5 (unique-visitor counting and analytics) on top of Phases 0-4, awaiting approval.** Everything marked ✅ exists and is tested. **Counts are registered face *identities*, visits and events from PostgreSQL - never a count of physical people**; faces the recognition gate did not resolve are never added to a unique count ([docs/phase-5-report.md](docs/phase-5-report.md)).
+> Previous state: Phase 4 (visit lifecycle, entry/exit events, durable persistence).
 > The app detects faces, tracks them (temporary `#id` per session), **recognises/registers persistent visitors** (`V00124`) and records **visits**: one confirmed presence episode has one *entry* and one *exit*
-> event in PostgreSQL, as a face crop and in `events.log`. A track id is not a visitor id and neither is a visit id. **There are still no unique-visitor counts or analytics** (Phase 5): the number of visits or events is never a number of people, and the UI never shows an invented number. Details and honest limitations: [docs/phase-4-report.md](docs/phase-4-report.md), [docs/phase-3-report.md](docs/phase-3-report.md),
+> event in PostgreSQL, as a face crop and in `events.log`. A track id is not a visitor id and neither is a visit id. The number of visits or events is never a number of people, and the UI never shows an invented number. Details and honest limitations: [docs/phase-4-report.md](docs/phase-4-report.md), [docs/phase-3-report.md](docs/phase-3-report.md),
 > [docs/phase-2-report.md](docs/phase-2-report.md), [docs/phase-1-5-report.md](docs/phase-1-5-report.md), [docs/phase-1-report.md](docs/phase-1-report.md).
 > **Biometric data:** recognition stores face embeddings and face images - read [docs/privacy-and-security.md](docs/privacy-and-security.md) and the model-licence notes ([ADR 0013](docs/decisions/0013-recognition-model-and-licensing.md): hackathon/non-commercial scope) before using it on real people.
 
@@ -21,7 +22,8 @@ Detects, recognises, registers, tracks and counts unique visitors from video fil
 | Measured CPU benchmark | ✅ [docs/benchmarks/phase1-benchmark.md](docs/benchmarks/phase1-benchmark.md) (GPU: not measured – no usable GPU) |
 | Face embeddings (SFace, ONNX Runtime), landmark alignment, quality gate, automatic registration, re-identification across sessions/restarts, visitor gallery + details, live recognition labels + notifications | ✅ Phase 3 ([report](docs/phase-3-report.md), [benchmark](docs/benchmarks/phase3-recognition.md)) |
 | Visit lifecycle (grace period, reacquisition, EOF/interruption rules), idempotent entry/exit events in PostgreSQL + evidence crops + mandatory `events.log` with outbox, crash reconciliation, Event Logs page, visit details, live entry/exit notifications | ✅ Phase 4 ([report](docs/phase-4-report.md), [ADR 0014](docs/decisions/0014-visit-lifecycle-and-event-delivery.md), [benchmark](docs/benchmarks/phase4-visits.md)) |
-| Analytics, unique-visitor counts, real-time updates, RTSP hardening, per-user auth, deployment | Phases 5–7 (`docs/phase-roadmap.md`) |
+| Unique registered-visitor counts (global / session / scope), returning visitors, entry/exit statistics, active visits with session-liveness, activity charts, source/session breakdowns, recognition-coverage diagnostics, database-backed aggregation, live refresh, read-only count reconciliation, Analytics + Overview pages | ✅ Phase 5 ([report](docs/phase-5-report.md), [ADR 0015](docs/decisions/0015-counting-semantics.md), [benchmark](docs/benchmarks/phase5-analytics.md)) |
+| RTSP hardening, per-user auth, deployment, final submission | Phases 6–7 (`docs/phase-roadmap.md`) |
 
 ## Architecture
 React SPA ⇄ FastAPI (`/api/v1`) ⇄ PostgreSQL, plus an independent **video worker** process that dials the API over a WebSocket
@@ -78,7 +80,7 @@ disables Start. Leaving the page does not stop a session; Stop does.
 .\scripts\check.ps1 -SkipE2E
 .\scripts\test-backend.ps1 [-Unit]    .\scripts\test-frontend.ps1 [-E2E]
 ```
-Last full run (this machine, 2026-11-11): backend **499 passed** · frontend **219 passed** · Playwright **28 passed** (authenticated real stack with the real models, incl. application restarts and a crash-recovery test) · **746 total** (Phase 3 baseline 598) ·
+Last full run (this machine, 2026-11-11): backend **538 passed** · frontend **245 passed** · Playwright **30 passed** (authenticated real stack with the real models, incl. application restarts, crash recovery and the analytics workflow) · **813 total** (Phase 4 baseline 746) ·
 ruff, mypy (strict), ESLint, `tsc`, production build clean. Breakdown and what the tests do *not* prove: [docs/testing-strategy.md](docs/testing-strategy.md).
 Benchmark: `.venv\Scripts\python.exe backend\benchmarks\benchmark_detector.py` then `render_report.py`.
 
@@ -137,6 +139,10 @@ preliminary calibration ([benchmark](docs/benchmarks/phase2-tracking.md)). `dete
 | `visits.queue_size` / `max_attempts` / `retry_base_seconds` / `retry_max_seconds` / `drain_timeout_seconds` / `orphan_grace_seconds` | 1000 / 8 / 0.5 / 15 / 10 / 300 | persistence queue, retry/back-off of failed writes, how long a session end waits for its events, age before an unreferenced evidence file is deleted |
 | `logging` | … | logging (`LOG_LEVEL` env overrides level); `events_file` is the mandatory `events.log` |
 
+## Analytics and count reconciliation
+* **Unique visitors** = `COUNT(DISTINCT visitor_id)` over the visits in the selected scope; **registered visitors** = all identities in the database (global); **returning** = seen in a later session than the one that registered them; **active visits** = open visits of the *live* session (stale rows of crashed sessions are reported, not counted). Definitions and the erasure policy: [docs/phase-5-report.md](docs/phase-5-report.md).
+* `python scripts\reconcile_counts.py [--json]` recomputes the global counts independently and reports differences (**read-only; there is deliberately no repair mode**); also `GET /api/v1/analytics/reconciliation` and the *Data consistency* panel. Benchmarks: `backend\benchmarks\benchmark_analytics.py` (synthetic rows, isolated schema) and `evaluate_unique_count.py` (LFW-labelled identities).
+
 ## Events and consistency tools
 * `events.log` (JSON lines, `logging.events_file`) holds the pipeline narrative (track created/recovered, face detected, embedding generated, recognition, registration, source reconnects) and the durable `visit.entry` / `visit.exit` / `visit.interrupted` records (event id, visit id, visitor id, time, session/source, image reference, persistence outcome, `delivery_attempt`). PostgreSQL is the source of truth; the file is an auditable delivery artifact.
 * `python scripts\verify_events_log.py [--repair]` compares the file with the database (missing lines, unexplained duplicates, events unknown to the database; a redelivery after a crash is *explained* by its higher `delivery_attempt`). `--repair` first runs reconciliation. The same report is available at `GET /api/v1/events/log-verification`, health at `GET /api/v1/events/health`.
@@ -150,6 +156,8 @@ preliminary calibration ([benchmark](docs/benchmarks/phase2-tracking.md)). `dete
 * **Playwright can't find a browser** – set `PW_CHANNEL=msedge` (or `chrome`) or install Chromium. E2E needs ports 8000 and 5173 free.
 * **Orphaned processes after a crashed run** – `python scripts\stop_stack.py <pid>` kills a stack and all its descendants; `python scripts\stop_stack.py --sweep` kills any API/worker of this repository's backend.
 * **"Face recognition model missing" / recognition panel says unavailable** – run `scripts\download-model.ps1 -Recognition` on the worker machine and restart the worker; recognition also needs `tracking.enabled`.
+* **The unique-visitor number is smaller than the people I saw** - expected: it counts registered identities, and faces that fail the quality gate (blur, profile, masks, small) are never identified. See *Recognition coverage* on the Analytics page; it is a diagnostic, not recall.
+* **The "In view now" number is 0 but there are open visits in the database** - open visits of sessions that are not live are *stale* (a crash); they are not present. Restart the API or run `POST /api/v1/events/reconcile` to close them.
 * **No entry/exit events appear** - visits exist only for recognised/registered visitors; if the Recognition panel says *Low quality* / *Undecided* for every face (quality gate), there will be no visits. This is by design (the gate is not lowered to produce events).
 * **An exit shows "Observation ended"** - the video ended or monitoring stopped while the visitor was still in view; it does not mean they left. **"Interrupted"** means the worker/API/source failed; no duration is shown because the end is unknown.
 * **No visitors are registered from my video** – by design most faces fail the quality gate (blur, profile, small, masks); the Recognition panel shows *Low quality* / *Undecided*. See `docs/benchmarks/phase3-recognition.md`.

@@ -264,3 +264,18 @@ The browser notifies once per event `id` (a replay is silent). `visit_event` is 
 ## Worker → API
 **Unchanged.** Presence is derived by the API from the per-frame header (`frame_id`, `timestamp_ms`, `tracks[].{track_id,state,observed,first_seen_ms}`) and the Phase 3 observations; the worker needs no database access and sends no visit messages. Frames with
 a non-increasing `frame_id`, a time going backwards, a negative time or malformed tracks are ignored; the existing size limits apply. Session end reasons map onto visits as described in ADR 0014.
+
+# Phase 5 – analytics
+All routes are authenticated (`/analytics/*`), validated and free of paths, embeddings and secrets. **Definitions are part of the contract** (also returned in `overview.definitions`): *registered visitors* = identities in the database (global); *unique visitors* = `COUNT(DISTINCT visitor_id)` over visits in scope; *visits* = presence episodes; *entry/terminal events* = logical events (terminal kinds `absence`, `observation_ended`, `interrupted` are never merged and none is a verified departure); *returning* = seen in a later session than the registering one; *active visits* = open visits of the live session; *stale open visits* = open rows of non-live sessions (not counted); *unresolved tracks* = coverage diagnostic. **None is a count of physical people.**
+Common query parameters: `since` (inclusive) / `until` (exclusive) ISO 8601 on the visit **entry time**, naive = UTC, `since ≥ until` → 422 `invalid_range`; `source_id`; `session_id` (32 hex).
+| Endpoint | Returns |
+|---|---|
+| `GET /analytics/overview` | `registered_visitors` (global), `unique_visitors_in_scope`, `returning_visitors_in_scope`, `new_visitors_in_scope`, `visits`, `visits_without_identity` (erased), `entry_events`, `terminal_events`, `terminal_by_basis{absence,observation_ended,interrupted}`, `active_visits`, `active_visits_temporarily_missing`, `stale_open_visits`, `unresolved_tracks`, `generated_at`, `last_event_recorded_at`, `definitions` |
+| `GET /analytics/timeline?bucket=hour\|day` | UTC buckets `{bucket_start, visits, entries, unique_visitors (not additive), exits_absence, exits_observation_ended, interrupted}`, empty buckets filled, `truncated` when more than 1000 |
+| `GET /analytics/sources` | per source: visits, unique visitors, sessions, last entry |
+| `GET /analytics/sessions?limit&offset` | per session (newest first): source, state, `live`, visits (all of the session), unique visitors, interrupted, visitors registered here; paged |
+| `GET /analytics/coverage` | diagnostics: confirmed tracks, tracks evaluated / resolved / unresolved (+ breakdown), crops analysed / usable / rejected / dropped, errors, `resolved_share_of_evaluated_tracks` + a disclaimer (**not person-level recall**) |
+| `GET /analytics/recent?limit` | the latest entry/exit events in scope (`EventOut`) |
+| `GET /analytics/reconciliation` | read-only independent recount: `{consistent, errors, warnings, checks[{name, ok, expected, actual, detail, severity}], mode}` |
+| `POST /analytics/stream-ticket` → `WS /analytics/stream?ticket=` | change notices `{"type":"analytics_changed","reason":"visit_event\|visitor_registered\|visit_state\|session_started\|session_ended"}` after a `hello`; **no counts**; the ticket is single-use, 30 s and bound to `analytics` (a session ticket does not open it) |
+

@@ -148,8 +148,31 @@ class SessionManager:
         self.identity: IdentityManager | None = None
         # Phase 4: set by the application factory when the visit lifecycle is enabled.
         self.visits: VisitService | None = None
+        # Phase 5: browsers that only want to hear that analytics changed (no frames, no counts)
+        self._analytics_subs: set[Subscriber] = set()
         self._lock = asyncio.Lock()
         self._background: set[asyncio.Task[Any]] = set()
+
+    def subscribe_analytics(self) -> Subscriber:
+        sub = Subscriber()
+        self._analytics_subs.add(sub)
+        return sub
+
+    def unsubscribe_analytics(self, sub: Subscriber) -> None:
+        sub.closed = True
+        self._analytics_subs.discard(sub)
+
+    def live_session_ids(self) -> set[str]:
+        return {self.live.id} if self.live is not None else set()
+
+    def notify_analytics(self, reason: str) -> None:
+        """Tell analytics subscribers that PostgreSQL-derived numbers may have changed. They refetch;
+        no count travels on this channel, so there is no second counter that could drift."""
+        if not self._analytics_subs:
+            return
+        text = P.encode_control({"type": "analytics_changed", "reason": reason})
+        for sub in list(self._analytics_subs):
+            sub.push_control(text)
 
     def attach_visits(self, service: VisitService) -> None:
         self.visits = service
@@ -159,6 +182,7 @@ class SessionManager:
         live = self.live
         if live is not None and live.id == session_id:
             self._broadcast_text(live, message)
+        self.notify_analytics(str(message.get("type", "visit")))
 
     async def run_shielded(self, coro: Any) -> None:
         """Run cleanup that must complete even if the calling task is being cancelled.
@@ -341,6 +365,7 @@ class SessionManager:
                 ) from exc
             live.watchdogs.append(asyncio.create_task(self._start_watchdog(live)))
             log_event("session.starting", session_id=row.id, source_id=source_id)
+            self.notify_analytics("session_started")
             return self.to_out(row), True
 
     async def stop(self, session_id: str) -> SessionOut:
@@ -551,6 +576,8 @@ class SessionManager:
                     visitor_label=None if event.visitor_number is None else visitor_label(event.visitor_number),
                     similarity=event.similarity, reason=event.reason,
                 )  # fmt: skip
+            if event.kind == "registered":
+                self.notify_analytics("visitor_registered")
             if visits is not None:
                 self._visit_identity(live, event, obs.timestamp_ms)
 
@@ -718,6 +745,7 @@ class SessionManager:
                 sub.push_control(
                     P.encode_control({"type": "ended", "session": out.model_dump(mode="json")})
                 )
+        self.notify_analytics("session_ended")
         log_event(
             f"session.{state.lower()}",
             session_id=live.id,

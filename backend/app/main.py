@@ -24,6 +24,7 @@ from app.core.middleware import RequestIdMiddleware
 from app.core.security import AuthService
 from app.core.settings import Settings, get_settings
 from app.db.session import create_db_engine, create_session_factory
+from app.services.analytics import AnalyticsService
 from app.services.event_recorder import EventRecorder
 from app.services.evidence_store import EvidenceStore
 from app.services.identity_manager import IdentityManager
@@ -130,6 +131,10 @@ def create_app(
         )
         app.state.visits = VisitService(config.visits, recorder)
         app.state.sessions.attach_visits(app.state.visits)
+
+    app.state.analytics = AnalyticsService(
+        app.state.session_factory, app.state.sessions.live_session_ids
+    )
 
     register_exception_handlers(app)
     app.add_middleware(

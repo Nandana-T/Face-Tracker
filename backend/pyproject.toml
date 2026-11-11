@@ -66,6 +66,9 @@ ignore = ["S101"]
 "app/models/visitor.py" = ["E501"]
 # Phase 4 modules: long explanatory comments/strings; code itself is formatted by ruff.
 "app/models/visit.py" = ["E501"]
+"app/services/analytics.py" = ["E501"]
+"app/schemas/analytics.py" = ["E501"]
+"app/api/v1/analytics.py" = ["E501"]
 "app/schemas/events.py" = ["E501"]
 "app/api/v1/events.py" = ["E501"]
 "app/services/event_recorder.py" = ["E501"]
@@ -77,7 +80,7 @@ ignore = ["S101"]
 "app/core/config.py" = ["E501"]
 "app/api/v1/ws.py" = ["E501"]
 # Developer tools: long prose lines in the report text, deliberate subprocess calls (nvidia-smi/powershell).
-"benchmarks/**" = ["E501", "S603", "S607", "S311", "E741"]
+"benchmarks/**" = ["E501", "S603", "S607", "S311", "E741", "B023", "B007"]
 
 [tool.mypy]
 python_version = "3.12"

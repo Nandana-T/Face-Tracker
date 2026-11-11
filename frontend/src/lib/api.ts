@@ -1,7 +1,14 @@
 import { authToken, notifyUnauthorized } from "./auth";
 import type {
+  AnalyticsCoverage,
+  AnalyticsOverview,
+  AnalyticsReconciliation,
+  AnalyticsScope,
+  AnalyticsSessions,
+  AnalyticsTimeline,
   ErrorEnvelope,
   EventList,
+  SourceStat,
   EventSort,
   EventType,
   EventsHealth,
@@ -115,6 +122,24 @@ export function streamUrl(sessionId: string, ticket?: string): string {
   return ticket ? `${url}?ticket=${encodeURIComponent(ticket)}` : url;
 }
 
+function scopeParams(scope: AnalyticsScope, extra: Record<string, string> = {}): string {
+  const p = new URLSearchParams(extra);
+  if (scope.since) p.set("since", scope.since);
+  if (scope.until) p.set("until", scope.until);
+  if (scope.source_id) p.set("source_id", scope.source_id);
+  if (scope.session_id) p.set("session_id", scope.session_id);
+  const text = p.toString();
+  return text ? `?${text}` : "";
+}
+
+/** WebSocket URL of the analytics change stream (notices only - never counts). */
+export function analyticsStreamUrl(ticket?: string): string {
+  const base = API_BASE_URL.startsWith("http")
+    ? API_BASE_URL.replace(/^http/, "ws")
+    : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${API_BASE_URL}`;
+  return ticket ? `${base}/analytics/stream?ticket=${encodeURIComponent(ticket)}` : `${base}/analytics/stream`;
+}
+
 export interface EventQuery {
   limit: number;
   offset: number;
@@ -209,6 +234,22 @@ export const api = {
   visit: (id: string, signal?: AbortSignal) =>
     getJson<VisitDetailRecord>(`/visits/${encodeURIComponent(id)}`, signal),
   eventsHealth: (signal?: AbortSignal) => getJson<EventsHealth>("/events/health", signal),
+
+  analyticsOverview: (scope: AnalyticsScope, signal?: AbortSignal) =>
+    getJson<AnalyticsOverview>(`/analytics/overview${scopeParams(scope)}`, signal),
+  analyticsTimeline: (scope: AnalyticsScope, bucket: "hour" | "day", signal?: AbortSignal) =>
+    getJson<AnalyticsTimeline>(`/analytics/timeline${scopeParams(scope, { bucket })}`, signal),
+  analyticsSources: (scope: AnalyticsScope, signal?: AbortSignal) =>
+    getJson<{ scope: AnalyticsScope; items: SourceStat[] }>(`/analytics/sources${scopeParams(scope)}`, signal),
+  analyticsSessions: (scope: AnalyticsScope, limit = 10, signal?: AbortSignal) =>
+    getJson<AnalyticsSessions>(`/analytics/sessions${scopeParams(scope, { limit: String(limit) })}`, signal),
+  analyticsCoverage: (scope: AnalyticsScope, signal?: AbortSignal) =>
+    getJson<AnalyticsCoverage>(`/analytics/coverage${scopeParams(scope)}`, signal),
+  analyticsRecent: (scope: AnalyticsScope, limit = 8, signal?: AbortSignal) =>
+    getJson<EventList>(`/analytics/recent${scopeParams(scope, { limit: String(limit) })}`, signal),
+  analyticsReconciliation: (signal?: AbortSignal) =>
+    getJson<AnalyticsReconciliation>("/analytics/reconciliation", signal),
+  analyticsTicket: () => postJson<{ ticket: string; expires_in: number }>("/analytics/stream-ticket"),
 
   health: (signal?: AbortSignal) => getJson<HealthResponse>("/health", signal),
 

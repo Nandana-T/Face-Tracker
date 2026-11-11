@@ -7,6 +7,8 @@ Creates three tables, nothing else: `visits`, `visit_events`, `event_delivery_ou
 Foreign keys: `visits.visitor_id → visitors.id ON DELETE SET NULL` (erasing a visitor de-identifies their visits instead of deleting the audit trail), `visits.session_id → processing_sessions.id ON DELETE CASCADE`, `visit_events.visit_id → visits.id CASCADE`, `visit_events.visitor_id → visitors.id SET NULL`, `event_delivery_outbox.event_id → visit_events.id CASCADE`.
 Database invariants: `UNIQUE(visit_id, slot)` (≤ 1 entry and ≤ 1 terminal event per visit), `UNIQUE(idempotency_key)`, `UNIQUE(visits.visit_key)`, `UNIQUE(event_id, target)`; CHECKs on states/types/statuses, `slot` matches `event_type`, `exit_time ≥ entry_time`.
 
+> **Phase 5 added no migration.** The Alembic head is still `0004`; analytics read these tables. The hosted-write checklist (backup, TLS, destination, approval) is in [phase-5-report.md §11](phase-5-report.md).
+
 ## Order and prerequisites
 1. `0003` must be applied first (it creates `visitors`, which `0004` references). `alembic upgrade head` applies both in order.
 2. Apply with `.\scripts\migrate-cloud.ps1` (idempotent; refuses the old exposed password). **This needs your explicit approval; it was not run.**

@@ -415,3 +415,126 @@ export interface VisitsSnapshotMessage {
 }
 
 export type EventSort = "event_time" | "recorded_at";
+
+// ---------------------------------------------------------------------------------------------
+// Phase 5 - analytics. Definitions (see docs/phase-5-report.md): registered visitor = persistent
+// identity (global); unique visitors = distinct identities with a visit in scope; visit = one presence
+// episode; terminal event = exit | interrupted (never a verified departure). NONE of these is a count of
+// physical people, and unresolved tracks are a coverage diagnostic, never extra people.
+// ---------------------------------------------------------------------------------------------
+export interface AnalyticsScope {
+  /** ISO instants (UTC); `since` inclusive, `until` exclusive. */
+  since?: string;
+  until?: string;
+  source_id?: string;
+  session_id?: string;
+}
+
+export interface AnalyticsOverview {
+  scope: AnalyticsScope;
+  registered_visitors: number;
+  unique_visitors_in_scope: number;
+  returning_visitors_in_scope: number;
+  new_visitors_in_scope: number;
+  visits: number;
+  visits_without_identity: number;
+  entry_events: number;
+  terminal_events: number;
+  terminal_by_basis: { absence: number; observation_ended: number; interrupted: number };
+  active_visits: number;
+  active_visits_temporarily_missing: number;
+  stale_open_visits: number;
+  unresolved_tracks: number;
+  generated_at: string;
+  last_event_recorded_at: string | null;
+  definitions: Record<string, string>;
+}
+
+export interface TimelinePoint {
+  bucket_start: string;
+  visits: number;
+  entries: number;
+  unique_visitors: number;
+  exits_absence: number;
+  exits_observation_ended: number;
+  interrupted: number;
+}
+
+export interface AnalyticsTimeline {
+  scope: AnalyticsScope;
+  bucket: "hour" | "day";
+  timezone: string;
+  truncated: boolean;
+  points: TimelinePoint[];
+  note: string;
+}
+
+export interface SourceStat {
+  source_id: string;
+  source_label: string | null;
+  visits: number;
+  unique_visitors: number;
+  sessions: number;
+  last_entry_at: string | null;
+}
+
+export interface SessionStat {
+  session_id: string;
+  source_id: string;
+  source_label: string;
+  state: string;
+  live: boolean;
+  started_at: string;
+  ended_at: string | null;
+  visits: number;
+  unique_visitors: number;
+  interrupted_visits: number;
+  visitors_registered_here: number;
+}
+
+export interface AnalyticsSessions {
+  scope: AnalyticsScope;
+  total: number;
+  limit: number;
+  offset: number;
+  note: string;
+  items: SessionStat[];
+}
+
+export interface AnalyticsCoverage {
+  scope: AnalyticsScope;
+  sessions_in_scope: number;
+  confirmed_tracks: number;
+  tracks_with_recognition_observations: number;
+  tracks_resolved: number;
+  tracks_unresolved: number;
+  tracks_by_state: Record<string, number>;
+  unresolved_breakdown: Record<string, number>;
+  resolved_share_of_evaluated_tracks: number | null;
+  face_crops_analysed: number;
+  face_crops_usable: number;
+  face_crops_rejected_by_quality_gate: number;
+  face_crops_dropped_busy: number;
+  recognition_errors: number;
+  disclaimer: string;
+}
+
+export interface ReconcileCheck {
+  name: string;
+  ok: boolean;
+  expected: unknown;
+  actual: unknown;
+  detail: string;
+  severity: string;
+}
+
+export interface AnalyticsReconciliation {
+  consistent: boolean;
+  errors: number;
+  warnings: number;
+  checks: ReconcileCheck[];
+  mode: string;
+  duration_ms: number;
+  generated_at: string;
+}
+

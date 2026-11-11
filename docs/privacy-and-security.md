@@ -1,4 +1,4 @@
-# Privacy and security (updated for Phase 4)
+# Privacy and security (updated for Phase 5)
 
 Faces are **biometric data**. Phases 1-2 only detected and tracked faces (nothing identifying was stored). **From Phase 3 the system creates and stores biometric templates**
 (face embeddings) and representative face images of people it registers automatically. This document records what is stored, what is exposed, who may see it, and what is still missing.
@@ -32,6 +32,11 @@ Section *Biometric data (Phase 3)* below is the authoritative description of the
 * **Exit images are not new captures.** They are the visitor's last good observation, or - when none exists - the entry image labelled `entry_representative`. The UI states which one it is.
 * **What these events do not prove.** An exit is the last sighting, not proof of leaving the premises; a stream ending is not an exit; the number of visits is not a number of people (recognition errors, look-alikes and the quality gate make it unreliable without identity ground truth).
 * No new roles, no audit trail of who viewed an image, no encryption of evidence files at rest beyond the disk: the Phase 3 limitations still apply.
+
+## Analytics (Phase 5)
+* Analytics read only counts and timestamps from existing tables; no response contains an embedding, an image path or a credential (asserted in tests). The analytics stream carries change notices only.
+* **Erasure and aggregates:** erasing a visitor removes the identity from registered/unique counts; their visits and events stay as de-identified rows and remain in visit/entry/terminal totals (`visits_without_identity` makes this visible). No biometric or identity data is retained to preserve dashboard numbers. There is **no claim of anonymisation** beyond this: the pseudonymous visitor id/label still appears in older `events.log` lines (Phase 4).
+* A unique-visitor count is a count of face identities in this system, not of people; it must not be used to make decisions about individuals. The labelled evaluation used public research images (LFW); real hackathon faces were not published or used for accuracy claims.
 
 ## Data handling
 | Data | Where it lives | Retention |
