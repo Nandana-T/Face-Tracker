@@ -15,7 +15,8 @@ import { useMemo, useRef, useState } from "react";
 import { PageHeader } from "@/components/common/page-header";
 import { StatusIndicator } from "@/components/common/status-indicator";
 import { Card } from "@/components/ui/card";
-import { ApiError } from "@/lib/api";
+import { toast } from "@/components/ui/toaster";
+import { ApiError, api } from "@/lib/api";
 import { DetectionSummary } from "./detection-summary";
 import { SourceControls } from "./source-controls";
 import { RecognitionPanel } from "./recognition-panel";
@@ -211,6 +212,22 @@ export function MonitoringPage() {
             stopping={m.stop.isPending || m.session?.state === "STOPPING"}
             onStart={() => selected && m.start.mutate(selected)}
             onStop={() => m.session && m.stop.mutate(m.session.id)}
+            onUploaded={(source) => {
+              void m.sources.refetch();
+              setChoice(source.id);
+            }}
+            onDeleteUpload={(source) => {
+              void api
+                .deleteUpload(source.id)
+                .then(() => {
+                  toast.success("Uploaded video deleted");
+                  if (choice === source.id) setChoice(null);
+                  return m.sources.refetch();
+                })
+                .catch((err: unknown) =>
+                  toast.error(err instanceof Error ? err.message : "Could not delete the video"),
+                );
+            }}
           />
           <TrackingPanel
             session={m.session}

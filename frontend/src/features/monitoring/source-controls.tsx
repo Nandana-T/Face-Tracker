@@ -1,10 +1,13 @@
-import { Loader2, Play, RotateCcw, Square, Film, Camera } from "lucide-react";
+import { Loader2, Play, RotateCcw, Square, Film, Camera, Trash2 } from "lucide-react";
 import { motion } from "motion/react";
+import { useState } from "react";
+import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { SourceOut } from "@/lib/api-types";
 import { cn } from "@/lib/utils";
 import { sourceTypeLabel } from "./status-copy";
+import { UploadVideo } from "./upload-video";
 
 interface Props {
   sources: SourceOut[];
@@ -20,15 +23,19 @@ interface Props {
   stopping: boolean;
   onStart(): void;
   onStop(): void;
+  /** Upload support (omit to hide the panel). */
+  onUploaded?(source: SourceOut): void;
+  onDeleteUpload?(source: SourceOut): void;
 }
 
 export function SourceControls(p: Props) {
+  const [pendingDelete, setPendingDelete] = useState<SourceOut | null>(null);
   const reasonId = "start-blocked-reason";
   return (
     <Card>
       <CardHeader>
         <CardTitle>Video source</CardTitle>
-        <CardDescription>Sources are configured on the server.</CardDescription>
+        <CardDescription>Choose a configured source or upload your own video.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {p.sources.length === 0 ? (
@@ -73,11 +80,36 @@ export function SourceControls(p: Props) {
                       {s.availability !== "available" && ` - ${s.detail ?? "unavailable"}`}
                     </span>
                   </span>
+                  {s.origin === "upload" && p.onDeleteUpload && !p.locked ? (
+                    <button
+                      type="button"
+                      className="relative z-10 rounded p-1 text-muted-foreground hover:text-red-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      aria-label={`Delete uploaded video ${s.label.replace(/^Upload: /, "")}`}
+                      data-testid={`delete-${s.id}`}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setPendingDelete(s);
+                      }}
+                    >
+                      <Trash2 className="size-4" aria-hidden />
+                    </button>
+                  ) : null}
                 </label>
               );
             })}
           </div>
         )}
+
+        {p.onUploaded ? <UploadVideo disabled={p.locked} onUploaded={p.onUploaded} /> : null}
+        <ConfirmDialog
+          open={pendingDelete !== null}
+          onOpenChange={(o) => !o && setPendingDelete(null)}
+          title="Delete this uploaded video?"
+          description="The file is removed from the server. Visitors already registered from it are not affected (erase them in the Visitors page)."
+          confirmLabel="Delete video"
+          destructive
+          onConfirm={() => pendingDelete && p.onDeleteUpload?.(pendingDelete)}
+        />
 
         <div className="flex flex-wrap gap-2">
           {p.active ? (

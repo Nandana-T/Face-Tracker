@@ -19,6 +19,7 @@ import type {
   ReadinessResponse,
   RecognitionStatus,
   SessionOut,
+  SourceOut,
   SourcesResponse,
   SystemStatusResponse,
   VisitorDetail,
@@ -173,7 +174,57 @@ export interface AuthStatus {
   authenticated: boolean;
 }
 
+export interface UploadHandle {
+  promise: Promise<SourceOut>;
+  abort(): void;
+}
+
+/**
+ * Authenticated upload with progress (XMLHttpRequest: fetch cannot report upload progress). The raw file is
+ * the request body; the server validates it as a real video and returns the new source.
+ */
+function uploadVideo(file: File, onProgress: (fraction: number) => void): UploadHandle {
+  const xhr = new XMLHttpRequest();
+  const promise = new Promise<SourceOut>((resolve, reject) => {
+    xhr.open("PUT", `${API_BASE_URL}/uploads?filename=${encodeURIComponent(file.name)}`);
+    xhr.setRequestHeader("Accept", "application/json");
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    const token = authToken.get();
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(e.loaded / e.total);
+    };
+    xhr.onerror = () => reject(new ApiError("Unable to reach the API", "network"));
+    xhr.ontimeout = () => reject(new ApiError("The upload timed out", "network"));
+    xhr.onabort = () => reject(new ApiError("Upload cancelled", "network", undefined, "aborted"));
+    xhr.onload = () => {
+      let body: unknown = null;
+      try {
+        body = JSON.parse(xhr.responseText);
+      } catch {
+        /* non-JSON body */
+      }
+      if (xhr.status >= 200 && xhr.status < 300 && body) {
+        onProgress(1);
+        resolve(body as SourceOut);
+        return;
+      }
+      const err = (body as Partial<ErrorEnvelope> | null)?.error;
+      if (xhr.status === 401 && err?.code === "unauthorized") notifyUnauthorized();
+      reject(new ApiError(err?.message ?? `Upload failed (HTTP ${xhr.status})`, "http", xhr.status, err?.code, err?.request_id));
+    };
+    xhr.send(file);
+  });
+  return { promise, abort: () => xhr.abort() };
+}
+
 export const api = {
+  uploadVideo,
+  async deleteUpload(sourceId: string): Promise<void> {
+    const id = sourceId.replace(/^upload-/, "");
+    const response = await send(`/uploads/${encodeURIComponent(id)}`, undefined, { method: "DELETE" });
+    if (!response.ok) throw await toHttpError(response);
+  },
   authStatus: (signal?: AbortSignal) => getJson<AuthStatus>("/auth/status", signal),
   async login(password: string): Promise<void> {
     const { access_token } = await postJson<{ access_token: string }>("/auth/login", { password });

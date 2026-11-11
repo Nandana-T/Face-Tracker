@@ -945,3 +945,52 @@ async function restartedBlob(request: APIRequestContext) {
   const paths = ["overview", "timeline", "sources", "sessions", "coverage", "recent", "reconciliation"];
   return Promise.all(paths.map(async (p) => (await request.get(`/api/v1/analytics/${p}`, { headers })).json()));
 }
+
+// ---------------------------------------------------------------------------------------------
+// Upload: a real video file chosen in the browser, validated by the API, processed by the real worker and
+// models, then deleted. Fixture = the generated public-domain-portrait clip (no real person).
+// ---------------------------------------------------------------------------------------------
+test.describe("@live video upload", () => {
+  test.beforeEach(async ({ request }) => {
+    await stopAnythingRunning(request);
+    await clearVisitors(request);
+  });
+
+  test("@live upload a video, process it with the real models, then delete it", async ({ page, request }) => {
+    test.setTimeout(180_000);
+    await page.goto("/live");
+    await signIn(page);
+    await expect(page.getByTestId("start-button")).toBeEnabled({ timeout: 45_000 });
+    const clip = path.join(__dirname, "..", "..", "datasets", "e2e", "alignment.mp4");
+
+    // a non-video renamed .mp4 is refused by the server and leaves no source behind
+    await page.getByTestId("upload-input").setInputFiles({ name: "fake.mp4", mimeType: "video/mp4", buffer: Buffer.from("not a video".repeat(200)) });
+    await expect(page.getByTestId("upload-error")).toContainText("could not be opened as a video");
+    await expect(page.getByRole("radio", { name: /fake\.mp4/ })).toHaveCount(0);
+
+    // a real video is accepted, listed and selected
+    await page.getByTestId("upload-input").setInputFiles(clip);
+    await expect(page.getByText("Video uploaded")).toBeVisible({ timeout: 30_000 });
+    const radio = page.getByRole("radio", { name: /Upload: alignment\.mp4/ });
+    await expect(radio).toBeChecked();
+    const headers = await bearer(request);
+    const sources = await (await request.get("/api/v1/sources", { headers })).json();
+    const mine = sources.sources.find((s: { origin?: string }) => s.origin === "upload");
+    expect(mine.id).toMatch(/^upload-[0-9a-f]{32}$/);
+    expect(JSON.stringify(sources)).not.toMatch(/datasets|uploads|[A-Za-z]:\\/); // no server paths
+
+    // it is processed like any other source (real detector, tracker, recognition)
+    await page.getByTestId("start-button").click();
+    await expect(page.getByText(/New visitor registered/)).toBeVisible({ timeout: 40_000 });
+    await expect(viewport(page)).toHaveAttribute("data-view", "completed", { timeout: 40_000 });
+
+    // delete it from the dashboard (with confirmation); the source disappears and the API says 404
+    await page.getByRole("button", { name: "Delete uploaded video alignment.mp4" }).click();
+    await page.getByRole("button", { name: "Delete video" }).click();
+    await expect(radio).toHaveCount(0);
+    const uid = mine.id.replace("upload-", "");
+    expect((await request.delete(`/api/v1/uploads/${uid}`, { headers })).status()).toBe(404);
+    // anonymous upload is refused
+    expect((await request.put("/api/v1/uploads?filename=a.mp4", { data: "x" })).status()).toBe(401);
+  });
+});

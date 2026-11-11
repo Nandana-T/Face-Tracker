@@ -7,6 +7,7 @@ and environment-variable names stay on the server.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +15,7 @@ from typing import Literal
 
 from app.core.config import VIDEO_EXTENSIONS, AppConfig, SourceDef
 from app.core.paths import resolve_path
+from app.services.uploads import read_label
 from app.vision.sources.file_source import FileVideoSource
 from app.vision.sources.interfaces import SourceOpenError, VideoSource
 from app.vision.sources.rtsp_source import RtspVideoSource
@@ -28,6 +30,7 @@ class SourceDescriptor:
     type: Literal["file", "rtsp"]
     availability: Availability
     detail: str | None = None
+    origin: Literal["config", "sample", "upload"] = "config"
 
 
 @dataclass(frozen=True)
@@ -78,9 +81,33 @@ def _entries(config: AppConfig, env: Mapping[str, str]) -> list[_Resolved]:
                     taken.add(sid)
                     out.append(
                         _Resolved(
-                            SourceDescriptor(sid, f"Sample: {f.stem}", "file", "available"), str(f)
+                            SourceDescriptor(
+                                sid, f"Sample: {f.stem}", "file", "available", None, "sample"
+                            ),
+                            str(f),
                         )
                     )
+    upload_dir = resolve_path(config.video.upload_dir)
+    if config.video.uploads_enabled and upload_dir.is_dir():
+        for f in sorted(upload_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+            if (
+                f.is_file()
+                and f.suffix.lower() in VIDEO_EXTENSIONS
+                and re.fullmatch(r"[0-9a-f]{32}", f.stem)
+            ):
+                out.append(
+                    _Resolved(
+                        SourceDescriptor(
+                            f"upload-{f.stem}",
+                            f"Upload: {read_label(f)}",
+                            "file",
+                            "available",
+                            None,
+                            "upload",
+                        ),
+                        str(f),
+                    )
+                )
     return out
 
 

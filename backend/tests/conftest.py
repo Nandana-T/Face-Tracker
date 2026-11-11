@@ -37,7 +37,7 @@ def make_settings(tmp_path: Path, **overrides: Any) -> Settings:
 def make_config(tmp_path: Path, **video: Any) -> AppConfig:
     return AppConfig.model_validate(
         {
-            "video": video,
+            "video": {"upload_dir": str(tmp_path / "uploads"), **video},
             "logging": {"events_file": str(tmp_path / "logs" / "events.log")},
             "recognition": {"faces_dir": str(tmp_path / "faces")},
             "visits": {"evidence_dir": str(tmp_path / "evidence")},
@@ -51,6 +51,7 @@ def make_full_config(tmp_path: Path, **sections: Any) -> AppConfig:
     data.update(sections)
     data.setdefault("recognition", {}).setdefault("faces_dir", str(tmp_path / "faces"))
     data.setdefault("visits", {}).setdefault("evidence_dir", str(tmp_path / "evidence"))
+    data.setdefault("video", {}).setdefault("upload_dir", str(tmp_path / "uploads"))
     return AppConfig.model_validate(data)
 
 

@@ -24,7 +24,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
-from app.services.blob_store import BlobError, SupabaseBlobBackend  # noqa: E402
+from app.services.blob_store import BlobError, BlobNotFound, SupabaseBlobBackend  # noqa: E402
 
 
 def main() -> int:
@@ -54,6 +54,16 @@ def main() -> int:
         check("listing sees the object", any(k == obj for k, _ in backend.list("")))
         public = httpx.get(f"{url}/storage/v1/object/public/{bucket}/healthcheck/{obj}", timeout=20)
         check("the PUBLIC URL is refused", public.status_code >= 400)
+        anon = httpx.get(f"{url}/storage/v1/object/authenticated/{bucket}/healthcheck/{obj}", timeout=20)
+        check("unauthenticated download is refused (no key)", anon.status_code in (400, 401, 403, 404))
+        anon_list = httpx.post(f"{url}/storage/v1/object/list/{bucket}", json={"prefix": "", "limit": 5}, timeout=20)
+        check("unauthenticated listing is refused (no key)", anon_list.status_code in (400, 401, 403) or anon_list.json() == [])
+        try:
+            backend.get("does-not-exist.jpg")
+            check("a missing object raises 'not found'", False)
+        except BlobNotFound:
+            check("a missing object raises 'not found'", True)
+        check("exists() is False for a missing object", backend.exists("does-not-exist.jpg") is False)
         check("delete", backend.delete(obj) and not backend.exists(obj))
     except BlobError as exc:
         check(f"storage error: {exc}", False)

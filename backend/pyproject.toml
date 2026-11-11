@@ -67,6 +67,7 @@ ignore = ["S101"]
 # Phase 4 modules: long explanatory comments/strings; code itself is formatted by ruff.
 "app/models/visit.py" = ["E501"]
 "app/services/blob_store.py" = ["E501"]
+"app/services/uploads.py" = ["E501"]
 "app/services/blob_factory.py" = ["E501"]
 "app/services/evidence_store.py" = ["E501"]
 "app/services/image_store.py" = ["E501"]

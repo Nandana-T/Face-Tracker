@@ -86,6 +86,8 @@ export interface SourceOut {
   type: "file" | "rtsp";
   availability: "available" | "unavailable";
   detail: string | null;
+  /** Only "upload" sources can be deleted from the dashboard. */
+  origin?: "config" | "sample" | "upload";
 }
 
 export interface WorkerOut {

@@ -79,6 +79,11 @@ class VideoConfig(_Section):
     reconnect_interval_seconds: float = Field(default=5, gt=0, le=3600)
     # Every video file in this directory is offered as source "sample-<stem>".
     sample_dir: str = "datasets/samples"
+    # Videos uploaded through the dashboard (authenticated). The video WORKER must be able to read this
+    # folder (same machine / shared folder); every upload is deleted explicitly, never implicitly.
+    upload_dir: str = "storage/uploads"
+    uploads_enabled: bool = True
+    max_upload_mb: int = Field(default=500, ge=1, le=4096)
     sources: list[SourceDef] = Field(default_factory=list)
     rtsp: RtspConfig = Field(default_factory=RtspConfig)
     # Consecutive undecodable frames tolerated before a file source is declared broken.

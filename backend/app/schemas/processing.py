@@ -18,6 +18,8 @@ class SourceOut(BaseModel):
     type: Literal["file", "rtsp"]
     availability: Literal["available", "unavailable"]
     detail: str | None = None
+    # where the source comes from; only "upload" sources can be deleted from the dashboard
+    origin: Literal["config", "sample", "upload"] = "config"
 
 
 class WorkerOut(BaseModel):
