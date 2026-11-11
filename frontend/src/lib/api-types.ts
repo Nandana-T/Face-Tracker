@@ -93,6 +93,8 @@ export interface WorkerOut {
   worker_id: string | null;
   model_available: boolean | null;
   model_detail: string | null;
+  recognition_available?: boolean | null;
+  recognition_detail?: string | null;
 }
 
 export interface SourcesResponse {
@@ -132,6 +134,14 @@ export interface SessionStats {
   tracks_errors?: number;
   tracking_ms_last?: number;
   tracking_ms_avg?: number;
+  /** Phase 3 recognition counters (worker side; never embeddings). */
+  recog_enabled?: number;
+  recog_submitted?: number;
+  recog_dropped?: number;
+  recog_processed?: number;
+  recog_usable?: number;
+  recog_errors?: number;
+  recog_avg_ms?: number;
 }
 
 export interface SessionOut {
@@ -150,6 +160,7 @@ export interface SessionOut {
     frame_skip: number;
     confidence_threshold: number;
     tracking_enabled?: boolean;
+    recognition_enabled?: boolean;
   } | null;
 }
 
@@ -201,6 +212,89 @@ export interface FrameHeader {
   published_at_ms?: number;
 }
 
+/** What recognition concluded about ONE temporary track (ids are session-scoped; the visitor is persistent). */
+export type IdentityState =
+  | "UNRESOLVED"
+  | "INSUFFICIENT_QUALITY"
+  | "MATCH_PENDING"
+  | "RECOGNIZED"
+  | "AMBIGUOUS"
+  | "REGISTRATION_PENDING"
+  | "REGISTERED"
+  | "REJECTED";
+
+export interface IdentityEventMessage {
+  type: "identity";
+  session_id: string;
+  track_id: number;
+  state: IdentityState;
+  /** Transition worth a notification (null/"state" = silent state change). */
+  event: "state" | "registered" | "recognized" | "ambiguous" | "failed" | "conflict";
+  visitor: { id: string; number: number; label: string } | null;
+  similarity: number | null;
+  reason: string | null;
+}
+
 export type StreamMessage =
   | { type: "snapshot" | "state" | "ended"; session: SessionOut }
-  | { type: "stats"; stats: SessionStats };
+  | { type: "stats"; stats: SessionStats }
+  | IdentityEventMessage
+  | { type: "identities"; identities: IdentityEventMessage[] };
+
+export interface TrackIdentity {
+  state: IdentityState;
+  visitor: IdentityEventMessage["visitor"];
+}
+
+export interface Visitor {
+  id: string;
+  number: number;
+  label: string;
+  status: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  recognition_count: number;
+  has_image: boolean;
+  model_version: string;
+}
+
+export interface VisitorList {
+  items: Visitor[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface VisitorAssociation {
+  session_id: string;
+  source_label: string | null;
+  /** Temporary, only meaningful inside `session_id`. */
+  track_id: number;
+  state: IdentityState;
+  best_similarity: number | null;
+  observations: number;
+  conflicts: number;
+  registered_in_session: boolean;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
+export interface VisitorDetail extends Visitor {
+  first_session_id: string | null;
+  image_quality: number | null;
+  sessions_count: number;
+  tracks_count: number;
+  associations: VisitorAssociation[];
+}
+
+export type VisitorSort = "last_seen" | "first_seen" | "number";
+
+export interface RecognitionStatus {
+  enabled: boolean;
+  model: string;
+  model_version: string | null;
+  worker_available: boolean | null;
+  worker_detail: string | null;
+  registered_visitors: number;
+  indexed_embeddings: number;
+}

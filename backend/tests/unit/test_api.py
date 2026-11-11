@@ -38,8 +38,9 @@ def test_system_status_when_db_down_is_error_envelope(client_no_db: TestClient) 
     }
     assert body["components"]["video_worker"]["state"] == "not_running"
     assert body["components"]["face_detector"]["state"] == "not_running"
-    assert body["components"]["face_recognizer"]["state"] == "not_implemented"
-    assert body["components"]["tracker"]["state"] == "not_implemented"
+    # Phase 2/3: tracker and recognizer run in the worker, so without one they are "not running"
+    assert body["components"]["face_recognizer"]["state"] == "not_running"
+    assert body["components"]["tracker"]["state"] == "not_running"
     assert body["active_video_sources"] == 0
 
 

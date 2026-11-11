@@ -20,7 +20,7 @@ def write(tmp_path: Path, data: object) -> Path:
 def test_defaults_when_sections_omitted(tmp_path: Path) -> None:
     config = load_app_config(write(tmp_path, {}))
     assert config.detection.frame_skip == 2
-    assert config.recognition.similarity_threshold == 0.55
+    assert config.recognition.similarity_threshold == 0.5
     assert config.logging.events_file == "logs/events.log"
     assert config.video.source_type == "file"
 

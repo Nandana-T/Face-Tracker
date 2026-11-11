@@ -134,6 +134,12 @@ PROTECTED = [
     ("POST", "/api/v1/sessions/" + "0" * 32 + "/stream-ticket"),
     ("GET", "/api/v1/system/status"),
     ("GET", "/api/v1/config"),
+    ("GET", "/api/v1/visitors"),
+    ("GET", "/api/v1/visitors/" + "0" * 32),
+    ("GET", "/api/v1/visitors/" + "0" * 32 + "/image"),
+    ("DELETE", "/api/v1/visitors/" + "0" * 32),
+    ("GET", "/api/v1/recognition/status"),
+    ("GET", "/api/v1/recognition/stats"),
 ]
 
 

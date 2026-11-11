@@ -54,7 +54,8 @@ may live on another host), `ready` once connected and the model is verified, `ac
 {"environment":"development",
  "video":{"source_type":"file","source_configured":false,"reconnect_interval_seconds":5.0},
  "detection":{"frame_skip":2,"confidence_threshold":0.5,"model":"yolov11n-face","input_size":640},
- "stream":{"max_fps":15.0,"max_width":960},"recognition":{"similarity_threshold":0.55},
+ "stream":{"max_fps":15.0,"max_width":960},
+ "recognition":{"enabled":true,"model":"sface-2021dec","similarity_threshold":0.5,"novelty_threshold":0.4,"ambiguity_margin":0.05,"…":"no paths"},
  "tracking":{"enabled":true,"high_confidence":0.6,"confirm_hits":3,"tentative_timeout_seconds":0.5,
              "max_missing_seconds":2.0,"match_iou":0.2,"low_match_iou":0.3,"lost_match_iou":0.1,
              "lost_velocity_decay_per_second":1.0,"box_buffer":0.1,"max_tracks":200},
@@ -124,6 +125,46 @@ raw detections.
   `tracks_invalid_detections`, `tracks_errors`, `tracking_ms_last`, `tracking_ms_avg`. They are persisted with the rest of the
   stats in `processing_sessions.summary`; `SessionSettings.tracking_enabled` records whether the session tracked.
 * `GET /config` returns the validated `tracking` section (see the configuration reference in the README).
+
+# Phase 3 – recognition, persistent visitors, gallery
+
+Three identifiers, never interchangeable: **`track_id`** (temporary, one processing session), **`visitor_id`** (persistent facial identity; short label `V00124`) and
+`visit_id` (reserved for Phase 4, absent everywhere). All endpoints below require the bearer token; **no response ever contains an embedding, an image path or a biometric template**.
+
+## Worker → API: recognition observation (binary message)
+Same envelope as a video frame (`[uint32 N][JSON header][payload]`), but the header has `"kind": "observation"` and the payload is an optional small JPEG crop (≤ 192 px) – **never relayed to browsers**.
+```json
+{"kind":"observation","session_id":"b7c3…","track_id":4,"seq":2,"model_version":"sface-2021dec","dim":128,
+ "embedding_b64":"<512 bytes float32 LE, base64>","quality":0.71,"reasons":[],"timestamp_ms":4200,"frame_id":105}
+```
+`embedding_b64 = null` + `reasons:["blurry"]` = the face failed the quality gate (reported so the UI can say *Low quality*). `seq` is per track; `session_id:track_id:seq` is the idempotency key – a duplicate or
+delayed message is ignored. The API validates every field (types, ranges, base64, exact byte length) and drops invalid messages without affecting the stream. The worker's `hello` additionally reports
+`recognition:{key,enabled,available,detail}` (detail is generic – no server paths).
+
+## API → browser: identity events (text, on the existing stream)
+```json
+{"type":"identity","session_id":"b7c3…","track_id":4,"state":"REGISTERED","event":"registered",
+ "visitor":{"id":"6f1c…","number":124,"label":"V00124"},"similarity":null,"reason":null}
+{"type":"identities","identities":[ {…same shape…} ]}        // sent once to a browser that (re)connects mid-session
+```
+`state` ∈ `UNRESOLVED | INSUFFICIENT_QUALITY | MATCH_PENDING | RECOGNIZED | AMBIGUOUS | REGISTRATION_PENDING | REGISTERED | REJECTED`. `event` is `registered | recognized | ambiguous | failed | conflict | state` –
+the UI notifies only for the first four and only once per (event, track, visitor); `state` changes are silent. `visitor` is non-null only for RECOGNIZED/REGISTERED. A track's identity is meaningful only together with its `session_id`.
+
+## REST
+| Endpoint | Behaviour |
+|---|---|
+| `GET /visitors?limit=24&offset=0&q=&sort=last_seen\|first_seen\|number&order=desc\|asc` | `{items:[VisitorOut], total, limit, offset}`; `limit` 1–100; `q` = `V00012`, `12` or a hex id prefix (≥ 4 chars); invalid `sort`/`limit` → 422 |
+| `GET /visitors/{id}` | `VisitorDetail`: identity, first/last seen, `recognition_count`, `sessions_count`, `tracks_count`, `associations[]` (session, source label, **session-scoped** `track_id`, state, similarity, observations, conflicts). `{id}` = 32-hex id or the label (`V00124`/`124`). 404 `visitor_not_found` |
+| `GET /visitors/{id}/image` | the representative crop as `image/jpeg`, `Cache-Control: private, no-store`; 401 without a token; 404 `image_not_found`. The file path is resolved server-side and confined to the image store; there is no static route to the face directory |
+| `DELETE /visitors/{id}` | right to erasure: removes embeddings, image files, associations and the in-memory index entry; `204`, repeat → 404 |
+| `GET /recognition/status` | `{enabled, model, model_version, worker_available, worker_detail, registered_visitors, indexed_embeddings}` |
+| `GET /recognition/stats` | `{registered_visitors, associations, runtime:{…counters, latencies…}, thresholds}` – counters only |
+Recognition switched off → `503 recognition_disabled` on visitor endpoints. `VisitorOut` = `{id, number, label, status, first_seen_at, last_seen_at, recognition_count, has_image, model_version}`;
+`recognition_count` = tracks recognised as this visitor, **not visits**. There is no unique-visitor count and no entry/exit event anywhere in the API.
+
+## Session / stats additions
+`SessionSettings.recognition_enabled`; `SessionStats` gains worker counters `recog_enabled, recog_submitted, recog_dropped, recog_processed, recog_usable, recog_errors, recog_avg_ms, recog_queue_peak`;
+`GET /sources` → `worker.recognition_available / recognition_detail`; `GET /system/status` reports the tracker and recognizer components from the worker. Identity associations are persisted **before** a session is marked finished.
 
 ## GET /sources
 ```json

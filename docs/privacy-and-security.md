@@ -1,7 +1,26 @@
-# Privacy and security (Phase 1)
+# Privacy and security (updated for Phase 3)
 
-Faces are **biometric data**. Phase 1 only *detects* faces; it does not identify, store or track anyone, and the UI
-says so. This document records what is stored, what is exposed, and what is still missing.
+Faces are **biometric data**. Phases 1-2 only detected and tracked faces (nothing identifying was stored). **From Phase 3 the system creates and stores biometric templates**
+(face embeddings) and representative face images of people it registers automatically. This document records what is stored, what is exposed, who may see it, and what is still missing.
+Section *Biometric data (Phase 3)* below is the authoritative description of the new data; the table that follows still describes Phases 1-2 and is unchanged.
+
+## Biometric data (Phase 3)
+| Data | Where | Who can read it | Retention / deletion |
+|---|---|---|---|
+| Face **embedding** (128 float32) of a registered visitor, ≤ 5 per visitor, tagged with model version | PostgreSQL `face_embeddings` (RLS enabled); the identity manager's in-memory index | Only the API/worker processes. **No API response, log line or event contains an embedding**; the frontend never receives one | Until the visitor is erased (`DELETE /visitors/{id}`: embeddings, image, associations and index entry) or `recognition.retention_days` (0 = keep) has passed since last seen |
+| Representative **face image** (≤ 192 px crop, one or a few per visitor) | `recognition.faces_dir` (default `storage/faces`, on D:), content-addressed `<visitor>/<hash>.jpg` | Authenticated `GET /visitors/{id}/image` only (`Cache-Control: private, no-store`); no static route, no directory listing; the path is validated and confined to the store | Same as above; orphan files from interrupted writes are removed by `reconcile()` |
+| Observation embeddings in transit (worker → API) | One WebSocket message each, in RAM | Worker/API | Not stored unless they become part of a registration |
+| Track → visitor association (`identity_associations`) | PostgreSQL | Authenticated visitor API | Cascade-deleted with the visitor or the session |
+| Video frames | RAM only, as before. Crops sent for registration are small face regions, not frames | - | - |
+
+* **Consent and permitted use (assumption to confirm):** only footage the operator is authorised to process, of people informed under the applicable law (e.g. GDPR/local biometric statutes), may be used. The repository ships no footage of real people;
+  evaluation datasets (LFW, the hackathon clips) stay on D: in git-ignored folders and are not redistributed. Registering visitors from public cameras may be unlawful without notice/consent - this is a deployment decision, not a software feature.
+* **Authorization:** all visitor/recognition endpoints sit behind the same signed bearer token as the rest of the API (401 without it); the image endpoint is covered by tests (`test_visitors_api.py`). There is still **one shared admin role**: any signed-in user can view and erase any visitor.
+  Per-user roles, an audit trail of who viewed or erased what, and encryption of the biometric columns at rest (beyond the database provider's disk encryption) are **not implemented**.
+* **No inference of demographics:** the system computes similarity between embeddings only; it does not estimate age, gender or ethnicity and has no code path for it.
+* **Limits of face recognition:** false matches and false non-matches happen. The thresholds are conservative and an uncertain face stays *undecided* instead of being forced into an identity, but a wrong merge or a duplicate is possible
+  (measured rates: docs/phase-3-report.md). Do not use these identities for decisions about people without human review. Performance may differ across demographic groups and image conditions; no per-group evaluation was performed.
+* **Logs:** identity logging contains visitor numbers, track ids and states - never vectors or images. `events.log` entries `identity.registered|recognized|ambiguous|failed` carry session id, track id and visitor number.
 
 ## Data handling
 | Data | Where it lives | Retention |

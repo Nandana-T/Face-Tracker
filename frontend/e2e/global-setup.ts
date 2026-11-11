@@ -31,18 +31,8 @@ export default async function globalSetup() {
   const alive = await fetch(`${API}/health`).then((r) => r.ok, () => false);
   if (alive) throw new Error("Port 8000 is already serving an API; stop it before running the E2E suite.");
 
-  const env = prepareE2e();
-  fs.mkdirSync(path.join(root, "temp"), { recursive: true });
-  fs.mkdirSync(path.join(root, "logs"), { recursive: true });
-  const log = fs.openSync(path.join(root, "logs", "e2e-stack.log"), "w");
-  const child = spawn(python, ["scripts/dev_stack.py", "--exit-with-parent"], {
-    cwd: root,
-    env: { ...process.env, ...env, PYTHONUNBUFFERED: "1" },
-    stdio: ["ignore", log, log],
-    windowsHide: true,
-  });
-  child.unref();
-  fs.writeFileSync(PID_FILE, String(child.pid));
+  prepareE2e();
+  spawnApiStack("w");
 
   // The dev server (serves the app and proxies /api, including the WebSocket, to the API).
   const webAlive = await fetch(WEB).then((r) => r.ok, () => false);
@@ -62,6 +52,30 @@ export default async function globalSetup() {
   fs.writeFileSync(VITE_PID_FILE, String(vite.pid));
   await until("the dev server", async () => (await fetch(WEB)).ok, 60_000);
 
+  await waitForApiAndWorker();
+}
+
+/** Starts API + worker (two processes under one supervisor); output goes to a log file, not a pipe. */
+function spawnApiStack(logMode: "w" | "a", tiedToRunner = true) {
+  const env = prepareE2e();
+  fs.mkdirSync(path.join(root, "temp"), { recursive: true });
+  fs.mkdirSync(path.join(root, "logs"), { recursive: true });
+  const log = fs.openSync(path.join(root, "logs", "e2e-stack.log"), logMode);
+  // `--exit-with-parent` is a safety net for a crashed runner. A stack restarted from inside a TEST
+  // WORKER must not use it: Playwright kills the worker abruptly at the end, which would kill the
+  // supervisor before it could stop its children and leave an orphaned API + worker. Without it the
+  // supervisor lives until global teardown, which stops the whole tree through the PID file.
+  const child = spawn(python, tiedToRunner ? ["scripts/dev_stack.py", "--exit-with-parent"] : ["scripts/dev_stack.py"], {
+    cwd: root,
+    env: { ...process.env, ...env, PYTHONUNBUFFERED: "1" },
+    stdio: ["ignore", log, log],
+    windowsHide: true,
+  });
+  child.unref();
+  fs.writeFileSync(PID_FILE, String(child.pid));
+}
+
+async function waitForApiAndWorker() {
   await until("the API", async () => (await fetch(`${API}/health`)).ok, 90_000);
   // The API requires sign-in in this suite (ADMIN_PASSWORD is set): log in to look at the worker.
   const login = await fetch(`${API}/auth/login`, {
@@ -80,6 +94,21 @@ export default async function globalSetup() {
   );
 }
 
+/**
+ * Stops and restarts ONLY the API and the worker (the database, the face-image store and the dev
+ * server stay): what a real application restart looks like to the data.
+ */
+export async function restartApiStack() {
+  if (fs.existsSync(PID_FILE)) {
+    const pid = fs.readFileSync(PID_FILE, "utf8").trim();
+    execFileSync(python, [path.join(root, "scripts", "stop_stack.py"), pid], { stdio: "ignore" });
+    fs.rmSync(PID_FILE, { force: true });
+  }
+  await until("the old API to stop", async () => !(await fetch(`${API}/health`).then((r) => r.ok, () => false)), 30_000);
+  spawnApiStack("a", false);
+  await waitForApiAndWorker();
+}
+
 export function stopStack() {
   for (const file of [PID_FILE, VITE_PID_FILE]) {
     if (!fs.existsSync(file)) continue;
@@ -89,5 +118,11 @@ export function stopStack() {
     } finally {
       fs.rmSync(file, { force: true });
     }
+  }
+  // A supervisor that died abruptly can leave an orphaned API/worker behind (see scripts/stop_stack.py).
+  try {
+    execFileSync(python, [path.join(root, "scripts", "stop_stack.py"), "--sweep"], { stdio: "ignore" });
+  } catch {
+    /* nothing left to sweep */
   }
 }

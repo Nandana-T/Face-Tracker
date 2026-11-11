@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
-from app.core.config import RecognitionConfig, TrackingConfig
+from app.core.config import TrackingConfig
 
 
 class HealthResponse(BaseModel):
@@ -92,7 +92,8 @@ class PublicConfigResponse(BaseModel):
     video: PublicVideoConfig
     detection: PublicDetectionConfig
     stream: PublicStreamConfig
-    recognition: RecognitionConfig
+    # RecognitionConfig without filesystem paths (model_path, faces_dir) - see services/system.py
+    recognition: dict[str, Any]
     tracking: TrackingConfig
     logging: PublicLoggingConfig
 

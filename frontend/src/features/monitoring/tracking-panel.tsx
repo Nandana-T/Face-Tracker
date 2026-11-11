@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import type { SessionOut, Track } from "@/lib/api-types";
+import type { SessionOut, Track, TrackIdentity } from "@/lib/api-types";
 import { formatConfidence } from "@/lib/geometry";
 import { STATE_LABEL, formatDuration } from "@/lib/tracks";
 import { cn } from "@/lib/utils";
@@ -12,6 +12,7 @@ import type { SelectedTrack } from "./use-monitoring";
 interface Props {
   session: SessionOut | null;
   tracks: Track[];
+  identities?: ReadonlyMap<number, TrackIdentity>;
   trackingOn: boolean;
   showOverlay: boolean;
   onShowOverlay: (v: boolean) => void;
@@ -50,6 +51,7 @@ function Count({ label, value, testId, hint }: { label: string; value: string; t
 export function TrackingPanel({
   session,
   tracks,
+  identities,
   trackingOn,
   showOverlay,
   onShowOverlay,
@@ -137,6 +139,14 @@ export function TrackingPanel({
                       <span className={cn("rounded px-1 text-[10px] font-sans", STATE_TONE[t.state])}>
                         {STATE_LABEL[t.state]}
                       </span>
+                      {identities?.get(t.track_id)?.visitor ? (
+                        <span
+                          className="rounded bg-violet-500/15 px-1 text-[10px] font-sans text-violet-700 dark:text-violet-300"
+                          data-testid={`chip-visitor-${t.track_id}`}
+                        >
+                          {identities.get(t.track_id)?.visitor?.label}
+                        </span>
+                      ) : null}
                     </button>
                   </li>
                 );
@@ -157,7 +167,11 @@ export function TrackingPanel({
               aria-label={`Track ${selected.track.track_id} details`}
               data-testid="track-details"
             >
-              <TrackDetails selected={selected} onClose={() => onSelect(null)} />
+              <TrackDetails
+                selected={selected}
+                onClose={() => onSelect(null)}
+                visitorLabel={identities?.get(selected.track.track_id)?.visitor?.label ?? null}
+              />
             </motion.section>
           ) : null}
         </AnimatePresence>
@@ -224,7 +238,15 @@ function Row({ label, value, testId }: { label: string; value: string; testId: s
   );
 }
 
-function TrackDetails({ selected, onClose }: { selected: SelectedTrack; onClose: () => void }) {
+function TrackDetails({
+  selected,
+  onClose,
+  visitorLabel,
+}: {
+  selected: SelectedTrack;
+  onClose: () => void;
+  visitorLabel?: string | null;
+}) {
   const t = selected.track;
   const [x1, y1, x2, y2] = t.bbox;
   return (
@@ -264,6 +286,9 @@ function TrackDetails({ selected, onClose }: { selected: SelectedTrack; onClose:
         />
         <Row label="Box source" value={t.observed ? "detected in this frame" : "predicted (no detection)"} testId="detail-source" />
         <Row label="Missed updates in a row" value={String(t.missed_updates)} testId="detail-missed" />
+        {visitorLabel ? (
+          <Row label="Recognized as visitor" value={visitorLabel} testId="detail-visitor" />
+        ) : null}
         <Row label="Detections matched" value={String(t.hits)} testId="detail-hits" />
       </dl>
       <p className="text-[11px] text-muted-foreground">

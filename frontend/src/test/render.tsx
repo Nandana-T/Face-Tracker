@@ -19,8 +19,8 @@ export const statusFixture: SystemStatusResponse = {
   components: {
     video_worker: { state: "not_running", detail: "No worker connected." },
     face_detector: { state: "not_running", detail: "Model status is reported by the worker." },
-    face_recognizer: { state: "not_implemented", detail: "Planned for Phase 2." },
-    tracker: { state: "not_implemented", detail: "Planned for Phase 3." },
+    face_recognizer: { state: "not_running", detail: "Recognition runs in the worker once it connects." },
+    tracker: { state: "not_running", detail: "Tracking runs in the worker once it connects." },
   },
   active_video_sources: 0,
   video_source_configured: false,

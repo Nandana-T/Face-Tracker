@@ -25,6 +25,8 @@ class WorkerOut(BaseModel):
     worker_id: str | None = None
     model_available: bool | None = None
     model_detail: str | None = None
+    recognition_available: bool | None = None
+    recognition_detail: str | None = None
 
 
 class SourcesResponse(BaseModel):
@@ -70,6 +72,15 @@ class SessionStats(BaseModel):
     tracks_errors: int = 0
     tracking_ms_last: float = 0
     tracking_ms_avg: float = 0
+    # Phase 3 recognition counters (worker side; embeddings are never part of stats)
+    recog_enabled: int = 0
+    recog_submitted: int = 0
+    recog_dropped: int = 0
+    recog_processed: int = 0
+    recog_usable: int = 0
+    recog_errors: int = 0
+    recog_avg_ms: float = 0
+    recog_queue_peak: int = 0
 
 
 class SessionError(BaseModel):
@@ -82,6 +93,7 @@ class SessionSettings(BaseModel):
     frame_skip: int
     confidence_threshold: float
     tracking_enabled: bool = False
+    recognition_enabled: bool = False
 
 
 class SessionOut(BaseModel):

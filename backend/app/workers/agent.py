@@ -27,6 +27,13 @@ from app.vision.detection.model_registry import (
     verify_model_file,
 )
 from app.vision.detection.yolo_onnx import YoloOnnxFaceDetector
+from app.vision.recognition.registry import recognition_status as recognition_models_status
+from app.vision.recognition.service import (
+    FaceRecognizer,
+    FaceResult,
+    RecognitionRunner,
+    RecognitionScheduler,
+)
 from app.vision.sources.interfaces import SourceError, VideoSource
 from app.vision.sources.registry import build_source
 from app.vision.tracking.tracker import FaceByteTracker, TrackerConfig
@@ -49,6 +56,20 @@ def model_status(settings: Settings, config: AppConfig) -> tuple[bool, str | Non
         return False, (
             "The face detection model is missing or corrupt on the worker machine. "
             "Run scripts\\download-model.ps1 there."
+        )
+    return True, None
+
+
+def recognition_status(settings: Settings, config: AppConfig) -> tuple[bool, str | None]:
+    rc = config.recognition
+    if not rc.enabled:
+        return False, "Face recognition is switched off in the configuration."
+    ok, detail = recognition_models_status(settings.models_path)
+    if not ok:
+        # Generic text: it reaches the browser, so no server paths.
+        return False, (
+            "The face recognition model is missing or corrupt on the worker machine. "
+            "Run scripts\\download-model.ps1 -Recognition there."
         )
     return True, None
 
@@ -82,6 +103,7 @@ class Outbox:
         self._loop = loop
         self._control: deque[str] = deque(maxlen=500)
         self._frame: bytes | None = None
+        self._observations: deque[bytes] = deque(maxlen=256)
         self._wake = asyncio.Event()
         self._lock = threading.Lock()
         self.frames_overwritten = 0
@@ -101,12 +123,19 @@ class Outbox:
             self._frame = data
         self._signal()
 
-    def drain(self) -> tuple[list[str], bytes | None]:
+    def put_observation(self, data: bytes) -> None:
+        """Recognition observations keep their order (bounded; the oldest is dropped when full)."""
+        with self._lock:
+            self._observations.append(data)
+        self._signal()
+
+    def drain(self) -> tuple[list[str], bytes | None, list[bytes]]:
         with self._lock:
             control, self._control = list(self._control), deque(maxlen=500)
             frame, self._frame = self._frame, None
+            observations, self._observations = list(self._observations), deque(maxlen=256)
         self._wake.clear()
-        return control, frame
+        return control, frame, observations
 
     async def wait(self) -> None:
         await self._wake.wait()
@@ -142,7 +171,10 @@ class WorkerAgent:
         """Thread-safe: may be called from signal handlers or other threads."""
         loop, event = self._loop, self._stop_event
         if loop is not None and event is not None:
-            loop.call_soon_threadsafe(event.set)
+            with contextlib.suppress(
+                RuntimeError
+            ):  # the loop already ended: shutdown is idempotent
+                loop.call_soon_threadsafe(event.set)
 
     async def run_forever(self) -> None:
         self._loop = asyncio.get_running_loop()
@@ -188,6 +220,7 @@ class WorkerAgent:
             loop = asyncio.get_running_loop()
             self._outbox = Outbox(loop)
             ok, detail = model_status(self.settings, self.config)
+            rok, rdetail = recognition_status(self.settings, self.config)
             self._outbox.put_control(
                 {
                     "type": P.MSG_HELLO,
@@ -197,6 +230,12 @@ class WorkerAgent:
                         "key": self.config.detection.model,
                         "available": ok,
                         "detail": detail,
+                    },
+                    "recognition": {
+                        "key": self.config.recognition.model,
+                        "enabled": self.config.recognition.enabled,
+                        "available": rok,
+                        "detail": rdetail,
                     },
                 }
             )
@@ -222,9 +261,11 @@ class WorkerAgent:
         assert self._outbox is not None
         while True:
             await self._outbox.wait()
-            control, frame = self._outbox.drain()
+            control, frame, observations = self._outbox.drain()
             for text in control:
                 await ws.send(text)
+            for data in observations:
+                await ws.send(data)
             if frame is not None:
                 await ws.send(frame)
 
@@ -362,6 +403,7 @@ class WorkerAgent:
                 if tr.enabled
                 else None
             )
+            runner = self._build_recognition(active.session_id) if tracker is not None else None
             pipeline = ProcessingPipeline(
                 source,
                 detector,
@@ -382,13 +424,14 @@ class WorkerAgent:
                     {"type": P.MSG_STATS, "session_id": active.session_id, "stats": s}
                 ),
                 tracker=tracker,
+                recognition=runner,
+                recognition_pad=cfg.recognition.landmark_pad,
             )
             active.pipeline = pipeline
             if active.stop_requested:
                 pipeline.request_stop()
             outcome = pipeline.run()
-            stats = pipeline.stats.snapshot()
-            stats["corrupt_frames"] += int(getattr(source, "corrupt_frames", 0))
+            stats = pipeline.final_snapshot()
         except Exception:
             logger.exception("Session thread crashed")
             outcome = Outcome("ERROR", "processing_error", "An internal processing error occurred.")
@@ -406,6 +449,53 @@ class WorkerAgent:
                         "stats": stats,
                     }
                 )
+
+    def _build_recognition(self, session_id: str) -> RecognitionRunner | None:
+        rc = self.config.recognition
+        if not rc.enabled:
+            return None
+        try:
+            recognizer = FaceRecognizer(self.settings.models_path, rc)
+        except Exception as exc:  # noqa: BLE001 - the session continues without recognition
+            logger.warning("Recognition unavailable for this session: %s", type(exc).__name__)
+            return None
+        logger.info(
+            "Recognition ready",
+            extra={"model": recognizer.model_version, "load_s": round(recognizer.load_seconds, 2)},
+        )
+        return RecognitionRunner(
+            recognizer,
+            lambda r: self._publish_observation(session_id, recognizer, r),
+            RecognitionScheduler(rc),
+            rc.queue_size,
+        )
+
+    def _publish_observation(
+        self, session_id: str, recognizer: FaceRecognizer, r: FaceResult
+    ) -> None:
+        if self._outbox is None:
+            return
+        import base64
+
+        header = {
+            "kind": P.KIND_OBSERVATION,
+            "session_id": session_id,
+            "track_id": r.track_id,
+            "seq": r.seq,
+            "model_version": recognizer.model_version,
+            "dim": recognizer.dim,
+            "embedding_b64": None
+            if r.embedding is None
+            else base64.b64encode(r.embedding.astype("<f4").tobytes()).decode("ascii"),
+            "quality": r.quality,
+            "reasons": list(r.reasons),
+            "timestamp_ms": r.timestamp_ms,
+            "frame_id": r.frame_id,
+        }
+        try:
+            self._outbox.put_observation(P.pack_frame(header, r.crop_jpeg or b""))
+        except P.ProtocolError as exc:
+            logger.warning("Dropping oversized observation: %s", exc)
 
     def _publish(self, session_id: str, result: DetectionResult, jpeg: bytes | None) -> None:
         if jpeg is None or self._outbox is None:

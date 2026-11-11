@@ -78,6 +78,12 @@ class FakeWorker:
                     "available": model_ok,
                     "detail": None if model_ok else "no model",
                 },
+                "recognition": {
+                    "key": "sface-2021dec",
+                    "enabled": True,
+                    "available": True,
+                    "detail": None,
+                },
             }
         )
         wait_for(

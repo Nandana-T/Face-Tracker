@@ -115,6 +115,11 @@ async def session_stream(websocket: WebSocket, session_id: str) -> None:
         if sub is None:  # finished session: nothing live to stream
             await websocket.close(code=1000)
             return
+        identities = mgr.identity_snapshot(session_id)
+        if identities:  # a (re)connecting browser learns the current identity of every track
+            await websocket.send_text(
+                P.encode_control({"type": "identities", "identities": identities})
+            )
     except (WebSocketDisconnect, OSError, RuntimeError):
         if sub is not None:
             mgr.unsubscribe(session_id, sub)

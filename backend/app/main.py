@@ -24,6 +24,8 @@ from app.core.middleware import RequestIdMiddleware
 from app.core.security import AuthService
 from app.core.settings import Settings, get_settings
 from app.db.session import create_db_engine, create_session_factory
+from app.services.identity_manager import IdentityManager
+from app.services.image_store import LocalImageStore
 from app.services.session_manager import SessionManager
 from app.services.session_store import SessionStore
 
@@ -51,6 +53,15 @@ def create_app(
             extra={"environment": settings.app_env, "version": settings.app_version},
         )
         sessions: SessionManager = app.state.sessions
+        identity: IdentityManager | None = app.state.identity
+        if identity is not None:
+            try:
+                n = await asyncio.to_thread(identity.load)
+                await asyncio.to_thread(identity.reconcile)
+                await asyncio.to_thread(identity.purge_expired)
+                logger.info("Identity index loaded", extra={"embeddings": n})
+            except Exception as exc:  # database may be down at boot; recognition retries lazily
+                logger.warning("Could not load the identity index: %s", type(exc).__name__)
         try:
             await sessions.reconcile_orphans()
         except Exception as exc:  # database may be down at boot; the API must still start
@@ -85,6 +96,19 @@ def create_app(
     app.state.started_at = time.monotonic()
     app.state.auth = AuthService(settings)
     app.state.sessions = SessionManager(config, SessionStore(app.state.session_factory))
+    app.state.identity = None
+    if config.recognition.enabled:
+        from app.core.paths import resolve_path
+        from app.vision.recognition.registry import SFACE
+
+        app.state.identity = IdentityManager(
+            app.state.session_factory,
+            LocalImageStore(resolve_path(config.recognition.faces_dir)),
+            config.recognition,
+            SFACE.key,
+            SFACE.embedding_dim,
+        )
+        app.state.sessions.identity = app.state.identity
 
     register_exception_handlers(app)
     app.add_middleware(

@@ -37,7 +37,8 @@
     "jpeg_quality": 70
   },
   "recognition": {
-    "similarity_threshold": 0.55
+    "similarity_threshold": 0.50,
+    "novelty_threshold": 0.40
   },
   "tracking": {
     "enabled": true,

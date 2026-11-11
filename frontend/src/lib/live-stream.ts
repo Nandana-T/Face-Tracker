@@ -1,4 +1,4 @@
-import type { FrameHeader, SessionOut, SessionStats } from "./api-types";
+import type { FrameHeader, IdentityEventMessage, SessionOut, SessionStats } from "./api-types";
 import { parseControl, unpackFrame } from "./protocol";
 
 export type LinkState = "connecting" | "open" | "reconnecting" | "closed";
@@ -6,6 +6,8 @@ export type LinkState = "connecting" | "open" | "reconnecting" | "closed";
 export interface StreamHandlers {
   onSession(session: SessionOut): void;
   onStats(stats: SessionStats): void;
+  /** Optional: recognition results (one event per track transition, or the full set on (re)connect). */
+  onIdentity?(event: IdentityEventMessage, replay: boolean): void;
   /** Called outside React's render cycle; the consumer owns (and must close) the bitmap. */
   onFrame(image: ImageBitmap, header: FrameHeader): void;
   onLink(state: LinkState): void;
@@ -103,6 +105,14 @@ export class LiveStream {
       if (!message) return;
       if (message.type === "stats") {
         this.handlers.onStats(message.stats);
+        return;
+      }
+      if (message.type === "identity") {
+        this.handlers.onIdentity?.(message, false);
+        return;
+      }
+      if (message.type === "identities") {
+        for (const e of message.identities) this.handlers.onIdentity?.(e, true);
         return;
       }
       this.handlers.onSession(message.session);

@@ -14,8 +14,8 @@ const status = (dbOk: boolean) => ({
   components: {
     video_worker: { state: "not_running", detail: "No worker connected." },
     face_detector: { state: "not_running", detail: "Model status is reported by the worker." },
-    face_recognizer: { state: "not_implemented", detail: "Planned for Phase 2." },
-    tracker: { state: "not_implemented", detail: "Planned for Phase 3." },
+    face_recognizer: { state: "not_running", detail: "Recognition runs in the worker once it connects." },
+    tracker: { state: "not_running", detail: "Tracking runs in the worker once it connects." },
   },
   active_video_sources: 0,
   video_source_configured: false,
@@ -26,7 +26,7 @@ const config = {
   video: { source_type: "file", source_configured: false, reconnect_interval_seconds: 5 },
   detection: { frame_skip: 2, confidence_threshold: 0.5, model: "yolov11n-face", input_size: 640 },
   stream: { max_fps: 15, max_width: 960 },
-  recognition: { similarity_threshold: 0.55 },
+  recognition: { similarity_threshold: 0.5 },
   tracking: { max_missing_seconds: 2 },
   logging: { level: "INFO" },
 };

@@ -18,6 +18,7 @@ import { Card } from "@/components/ui/card";
 import { ApiError } from "@/lib/api";
 import { DetectionSummary } from "./detection-summary";
 import { SourceControls } from "./source-controls";
+import { RecognitionPanel } from "./recognition-panel";
 import { TrackingPanel } from "./tracking-panel";
 import { describeView, sourceTypeLabel, type ViewKey } from "./status-copy";
 import { useMonitoring } from "./use-monitoring";
@@ -71,6 +72,14 @@ export function MonitoringPage() {
   else if (worker.model_available === false) startBlockedReason = "The face detection model is unavailable.";
   else if (!selected) startBlockedReason = "Select an available source.";
   const canStart = startBlockedReason === null;
+
+  // Why recognition is not running, from what the backend reported (never guessed).
+  const recognitionUnavailable: string | null =
+    worker?.connected && worker.recognition_available === false
+      ? (worker.recognition_detail ?? "Face recognition is unavailable on the worker.")
+      : m.session && m.session.settings && !m.session.settings.recognition_enabled
+        ? "Recognition was not active for this session (tracking is required and the worker must have the recognition model)."
+        : null;
 
   const sessionSource = m.session?.source ?? sourceList.find((s) => s.id === selected) ?? null;
   const hasFrame = m.latest !== null;
@@ -177,8 +186,10 @@ export function MonitoringPage() {
           </Card>
 
           <p className="rounded-md border border-dashed px-4 py-3 text-xs text-muted-foreground">
-            Face detection and temporary tracking: boxes show where a face-like region was found,
-            and a &ldquo;#id&rdquo; follows the same face from frame to frame within this session.
+            Face detection, temporary tracking and recognition: boxes show where a face-like region
+            was found, and a &ldquo;#id&rdquo; follows the same face from frame to frame within this session.
+            A &ldquo;V…&rdquo; label is a persistent visitor identity assigned only after repeated,
+            reliable observations; &ldquo;Recognizing&rdquo; means undecided, not unknown.
             Solid boxes were detected in the frame; dashed boxes are predicted positions. A track id
             is not a person&rsquo;s identity: it does not identify anyone, is not kept across
             sessions, and is not a unique-visitor count. Frames are shown live and are not stored.
@@ -203,6 +214,7 @@ export function MonitoringPage() {
           <TrackingPanel
             session={m.session}
             tracks={m.tracks}
+            identities={m.identities}
             trackingOn={m.trackingOn}
             showOverlay={m.showOverlay}
             onShowOverlay={m.setShowOverlay}
@@ -210,6 +222,13 @@ export function MonitoringPage() {
             onShowLabels={m.setShowLabels}
             selected={m.selected}
             onSelect={m.selectTrack}
+          />
+          <RecognitionPanel
+            session={m.session}
+            identities={m.identities}
+            registeredThisSession={m.registeredThisSession}
+            recognisedTracks={m.recognisedTracks}
+            unavailableReason={recognitionUnavailable}
           />
           <DetectionSummary session={m.session} latest={m.latest} streamFps={m.streamFps} />
         </div>

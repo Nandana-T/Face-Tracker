@@ -52,7 +52,7 @@ Free web instances should **not** be assumed capable of real-time YOLO + Insight
 
 ## 3. AI worker requirements (measured numbers: `docs/benchmarks/phase1-benchmark.md`)
 * CPU-only: ≥ 4 vCPU, ≥ 4 GB RAM per 1–2 streams at frame_skip 2; GPU recommended for multiple streams.
-* Persistent disk for model weights (`MODELS_DIR`, ~hundreds of MB) and temporary frames.
+* Persistent disk for model weights (`MODELS_DIR`, ~hundreds of MB) and temporary frames. Recognition adds `models/face-recognizer/` (SFace 38.7 MB + YuNet 0.2 MB, fetched with `scripts\download-model.ps1 -Recognition`) and one extra background thread (≈ 2 ONNX threads) in the worker; measured cost: `docs/benchmarks/phase3-recognition.md`.
 * Network: outbound access to PostgreSQL (and object storage). **RTSP**: the camera must be reachable from the worker - a worker on the camera LAN avoids exposing cameras to the internet; if the worker is remote use a VPN (WireGuard/Tailscale) and never port-forward RTSP.
 * Cost: a GPU VM is the dominant cost; a local machine is free for the hackathon demo. Final choice deferred to Phase 7 after benchmarks.
 * The Phase 1 worker needs **no database credentials and no inbound ports**: it dials the API
@@ -70,6 +70,7 @@ Free web instances should **not** be assumed capable of real-time YOLO + Insight
 * Security: no user authentication exists yet - do not expose a hosted API with real cameras (see `privacy-and-security.md`).
 
 ## 4. Image storage migration strategy
+Phase 3 stores visitor face images in `recognition.faces_dir` (default `storage/faces`) through the `LocalImageStore` (content-addressed, atomic, confined; behind a small interface so object storage can replace it). **The API and the worker that serve one deployment must see the same `faces_dir` if recognition is enabled on the API host** (the API writes the images; the worker only sends crops over the WebSocket). Back up `storage/faces` together with the database - the identity manager's `reconcile()` repairs a database/image mismatch but cannot recreate a lost image. Hosted migration `0003` is additive and must be applied deliberately with `scripts\migrate-cloud.ps1` (see `docs/phase-3-report.md` for the status).
 Development: files under `storage/` (D:). Rows store **relative** paths. Phase 4 introduces an `ImageStore` protocol
 with local and S3-compatible/Supabase Storage implementations; migrating = copy objects preserving relative keys, set
 `STORAGE_BACKEND`, done. Supabase Storage free tier is 1 GB - face crops can exceed that, so budget accordingly.

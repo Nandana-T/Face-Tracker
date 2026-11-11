@@ -18,12 +18,11 @@ describe("overview empty states (no invented data)", () => {
     renderApp("/");
     await screen.findByTestId("system-status");
     await waitFor(() => expect(screen.getAllByLabelText("Done")).toHaveLength(2));
-    expect(screen.getByLabelText("Planned")).toBeInTheDocument();
+    expect(screen.getAllByLabelText("To do")).toHaveLength(2); // choose a source + start processing
   });
 });
 
 describe.each([
-  ["/visitors", "Visitors", "No visitors registered yet"],
   ["/events", "Event Logs", "No events recorded"],
   ["/analytics", "Analytics", "No analytics available"],
 ])("%s placeholder page", (path, heading, empty) => {
@@ -39,7 +38,7 @@ describe("/live page shell", () => {
     renderApp("/live");
     expect(await screen.findByRole("heading", { level: 1, name: "Live Monitoring" })).toBeInTheDocument();
     expect(await screen.findByTestId("viewport")).toBeInTheDocument();
-    expect(screen.getByText(/Face detection and temporary tracking/)).toBeInTheDocument();
+    expect(screen.getByText(/Face detection, temporary tracking and recognition/)).toBeInTheDocument();
   });
 });
 

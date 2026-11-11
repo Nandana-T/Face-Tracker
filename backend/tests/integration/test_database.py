@@ -70,7 +70,7 @@ def test_api_ready_and_status_with_real_database(
     assert ready.json()["checks"]["database"]["status"] == "ok"
     assert status.json()["database"] == {
         "status": "ok",
-        "migration_revision": "0002",
+        "migration_revision": "0003",
         "migrations_applied": True,
     }
 
@@ -119,7 +119,7 @@ def test_migrations_are_repeatable_and_never_destroy_existing_data(
     with engine.begin() as conn:
         conn.execute(text("INSERT INTO app_metadata (key, value) VALUES ('keep', 'me')"))
 
-    command.upgrade(cfg, "head")  # 0001 -> 0002 with data present
+    command.upgrade(cfg, "0002")  # 0001 -> 0002 with data present
     with engine.begin() as conn:
         conn.execute(
             text(
@@ -131,24 +131,31 @@ def test_migrations_are_repeatable_and_never_destroy_existing_data(
             )
         )
 
-    for _ in range(3):  # re-running is a no-op
+    for _ in range(3):  # 0002 -> 0003 (Phase 3) with data present; re-running is a no-op
         command.upgrade(cfg, "head")
     with engine.connect() as conn:
         assert (
             conn.execute(text("SELECT value FROM app_metadata WHERE key = 'keep'")).scalar() == "me"
         )
         assert conn.execute(text("SELECT count(*) FROM processing_sessions")).scalar() == 1
-        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0002"
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0003"
+        assert {"visitors", "face_embeddings", "identity_associations"} <= set(
+            inspect(engine).get_table_names()
+        )
 
-    # Rolling the newest migration back and forward keeps everything older
-    # (it only drops what 0002 created).
+    # Rolling the newest migration back drops only what it created.
+    command.downgrade(cfg, "0002")
+    names = set(inspect(engine).get_table_names())
+    assert not {"visitors", "face_embeddings", "identity_associations"} & names
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT count(*) FROM processing_sessions")).scalar() == 1
     command.downgrade(cfg, "0001")
     with engine.connect() as conn:
         assert (
             conn.execute(text("SELECT value FROM app_metadata WHERE key = 'keep'")).scalar() == "me"
         )
     command.upgrade(cfg, "head")
-    assert "processing_sessions" in inspect(engine).get_table_names()
+    assert "visitors" in inspect(engine).get_table_names()
 
 
 def test_session_table_enforces_its_invariants_on_postgresql(

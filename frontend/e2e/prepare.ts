@@ -41,6 +41,9 @@ export function prepareE2e(): E2eEnvironment {
 
   const databaseUrl = run([path.join(root, "scripts", "local_pg.py"), "start"], root);
   run(["-m", "alembic", "upgrade", "head"], backend, { DATABASE_URL: databaseUrl });
+  // Every run starts without visitors (database rows and face images of the E2E store only).
+  run([path.join(root, "scripts", "e2e_reset_identity.py")], root, { DATABASE_URL: databaseUrl });
+  fs.rmSync(path.join(root, "datasets", "e2e", "faces"), { recursive: true, force: true });
 
   const dir = path.join(root, "datasets", "e2e");
   fs.mkdirSync(dir, { recursive: true });
@@ -52,6 +55,12 @@ export function prepareE2e(): E2eEnvironment {
   };
   video("alignment.mp4", "3");
   video("long.mp4", "40");
+  // Labelled identities for the recognition tests: person A = the public-domain portrait above; person B =
+  // two DIFFERENT photographs of the same LFW person (research benchmark images, kept on D:, never committed).
+  const lfw = path.join(root, "datasets", "lfw", "lfw_funneled", "Michael_Phelps");
+  for (const [file, photo] of [["person-b1.mp4", "Michael_Phelps_0001.jpg"], ["person-b2.mp4", "Michael_Phelps_0002.jpg"]] as const) {
+    if (fs.existsSync(path.join(lfw, photo))) video(file, "4", ["--image", path.join(lfw, photo)]);
+  }
   fs.writeFileSync(path.join(dir, "broken.mp4"), Buffer.from("this is not a video file".repeat(100)));
 
   process.env.KATOMARAN_E2E_DATABASE_URL = databaseUrl;

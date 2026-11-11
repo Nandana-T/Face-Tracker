@@ -1,7 +1,7 @@
 # Architecture
 
-Katomaran AI is a **modular monolith with a separately executable video-processing worker**. Status: Phase 2
-(ingestion + face *detection* + temporary multi-face *tracking*) is implemented; recognition, persistent visitors, visits, entry/exit events and analytics are later phases.
+Katomaran AI is a **modular monolith with a separately executable video-processing worker**. Status: Phase 3
+(ingestion + face *detection* + temporary multi-face *tracking* + face *recognition* with automatic registration and a visitor gallery) is implemented; visits, entry/exit events and analytics are later phases.
 
 ```
  Browser (React SPA - Vercel / Vite dev server)
@@ -21,6 +21,8 @@ Katomaran AI is a **modular monolith with a separately executable video-processi
  │     (file | RTSP)                   (drop-oldest if live)           FaceDetector (YOLO11n-face, ONNX Runtime)
  │                                                    └──► FaceByteTracker (Phase 2, per session, analysed frames only)
  │                                                    └──► JPEG(≤960 px) + DetectionResult + tracks ──► latest-wins slot
+ │            confirmed tracks ──(bounded queue, drop when busy)──► recognition thread: crop → YuNet landmarks → align → quality → SFace
+ │                                                    └──► observation (embedding + crop) ──► ordered, bounded outbox ──► API
  └─────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -37,7 +39,9 @@ Inference never runs in the API process. The worker needs **no database credenti
 | `vision/sources` | `VideoSource` protocol; `FileVideoSource`, `RtspVideoSource` (timeouts, back-off reconnect, redacted logging); `registry` (trusted source ids → concrete sources) |
 | `vision/detection` | `FaceDetector` protocol; `YoloOnnxFaceDetector` (letterbox, decode, NMS); `model_registry` (pinned weights, checksum, explicit fetch) |
 | `vision/tracking` | **Phase 2**: `FaceByteTracker` (ByteTrack-style two-stage IoU association, per-axis Kalman filters, time-based lifecycle), `kalman`, `interfaces` (`TrackState`, `TrackSnapshot`, events, counters) |
-| `vision/recognition` | interface only (Phase 3) |
+| `vision/recognition` | **Phase 3**: `registry` (pinned models, explicit fetch), `landmarks` (YuNet), `alignment` (ArcFace template), `quality` (gate), `embedder` (ONNX Runtime SFace, validated/normalised), `matching` (in-memory index, partitioned by model version), `service` (scheduler + bounded recognition thread) |
+| `services/identity_manager`, `services/image_store` | **Phase 3**: the single, serialized decision point (recognise / defer / register), duplicate prevention, idempotent registration, reconciliation, erasure, retention; the local face-image store (content-addressed, confined, never served statically) |
+| `models/visitor`, `api/v1/visitors`, `schemas/visitors` | `visitors`, `face_embeddings`, `identity_associations`; gallery/recognition REST API |
 | `workers/` | `pipeline` (frame skip, back-pressure, stats, shutdown), `agent` (WebSocket client, one session at a time), `protocol` (wire format), `video_worker` (entrypoint) |
 
 Dependency direction: `api → services → store → db`; `workers` and `vision` depend on `core` only (never on `api`,
@@ -61,9 +65,8 @@ detection summary, state copy, `useMonitoring`), plus the Phase 0 shell/design s
 imperatively; React state changes at most every 400 ms for numbers and on backend-confirmed state changes.
 
 ## Persistence design
-### Identifiers - never conflate these (future phases)
-* `visitor_id` - persistent identity. * `track_id` - tracker-local, per session. * `visit_id` - one entry→exit lifecycle.
-Phase 1 introduces none of them: it detects faces, it does not identify them.
+### Identifiers - never conflate these
+* `visitor_id` - persistent facial identity (UUID hex; label `V00124` = `visitor_number`). * `track_id` - tracker-local, per session; stored only in `identity_associations` together with its `session_id`. * `visit_id` - one entry→exit lifecycle: **not implemented** (Phase 4).
 
 ### Implemented schema
 * `app_metadata(key PK, value, updated_at)`.
@@ -76,6 +79,10 @@ Phase 1 introduces none of them: it detects faces, it does not identify them.
 Phase 2 added **no table and no migration**: the per-session tracking counters travel with the existing stats and are stored in
 `processing_sessions.summary` (JSON). Per-track rows were deliberately not added: a track is not an entity anyone needs after the
 session, and Phase 3/4 will define what must be stored once identity and visits exist.
+
+* Phase 3 (migration `0003`, additive): `visitors(id, visitor_number UNIQUE, registration_key UNIQUE, status, model_version, first_session_id, first/last_seen_at, recognition_count, image_path, image_sha256, image_quality, …)`,
+  `face_embeddings(id, visitor_id FK CASCADE, model_version, dim, vector BYTEA float32, vector_sha256, quality_score; UNIQUE(visitor_id, vector_sha256))`,
+  `identity_associations(id, session_id FK, track_id, visitor_id FK NULL, state CHECK, best_similarity, observations, conflicts, registered_here; UNIQUE(session_id, track_id))`. RLS enabled. Embeddings live **only** in the database (and the worker/API memory); images only in the face-image store.
 
 ### Planned (with their slices)
 ```
@@ -100,6 +107,22 @@ Video source → reader → YOLO11n-face (every (N+1)th frame) → FaceByteTrack
 * Boundary: a **track** is a temporary hypothesis inside one processing session. It is not a visitor, has no embedding, and is
   never matched across sessions. Persistent identity (`visitor_id`) and visits arrive with recognition (Phase 3) and the visit
   lifecycle (Phase 4). Decision record: [ADR 0012](decisions/0012-tracker-selection.md).
+
+## Identity architecture (Phase 3)
+```
+worker: confirmed track → [scheduler: warm-up every 0.5 s, then every 5 s, time-budgeted] → crop copy → recognition thread
+        landmarks → alignment → quality gate → embedding ───────► binary "observation" (embedding + small crop)
+API:    IdentityManager (ONE lock; PostgreSQL advisory lock for multi-process)
+        index lookup → vote {match | ambiguous | grey | novel} → per-track state machine → [register under the lock]
+        → identity event to browsers; associations persisted when the session ends
+```
+* **Decision rules** (docs/phase-3-report.md has the evidence behind each number): `best ≥ 0.50` and margin ≥ 0.05 over the next visitor ⇒ *match vote*; `0.40 ≤ best < 0.50` ⇒ *grey* (no recognition, no registration);
+  `best < 0.40` ⇒ *novel*; best within the margin of another visitor ⇒ *ambiguous*. Recognition needs ≥ 2 match votes; registration needs ≥ 3 consecutive novel votes over ≥ 0.8 s, mean quality ≥ 0.35 and mutually consistent embeddings
+  (mean pairwise cosine ≥ 0.6) – a single frame never creates an identity.
+* **Duplicate prevention:** serialized match-then-register; the aggregated embedding is re-checked against a freshly synced index *inside* the lock; `registration_key = session:track` is UNIQUE so a retry returns the existing visitor;
+  duplicate/delayed observations are dropped by id; the same visitor is never propagated to two simultaneous tracks of one session; a database constraint alone cannot prevent duplicate *people* and is not claimed to.
+* **Index:** exact numpy cosine search over embeddings loaded from PostgreSQL at start-up and updated incrementally (watermark sync before every registration). pgvector/ANN were not introduced: a few thousand 128-d vectors search in microseconds and the database remains authoritative.
+* **Failure handling:** a failed registration rolls back completely (visitor + embeddings + image file), backs off and retries on fresh evidence; interrupted writes are repaired by `reconcile()` at start-up (orphan image files removed after a grace period, dangling image references cleared).
 
 ## Measured resource usage
 See [`benchmarks/phase1-benchmark.md`](benchmarks/phase1-benchmark.md): one real-time stream at the shipped defaults uses

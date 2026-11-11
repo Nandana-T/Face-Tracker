@@ -1,4 +1,7 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import fs from "node:fs";
+import path from "node:path";
+import { restartApiStack } from "./global-setup";
 import { stubApi } from "./helpers";
 import { E2E_PASSWORD } from "./prepare";
 
@@ -20,7 +23,7 @@ test.describe("Live Monitoring (stubbed backend)", () => {
     await expect(page.getByRole("radiogroup", { name: "Video source" }).getByRole("radio")).toHaveCount(2);
     await expect(source(page, "Missing clip")).toBeDisabled();
     await expect(page.getByTestId("start-button")).toBeEnabled();
-    await expect(page.getByText(/Face detection and temporary tracking/)).toBeVisible();
+    await expect(page.getByText(/Face detection, temporary tracking and recognition/)).toBeVisible();
   });
 
   test("tells the user to start the worker when none is connected", async ({ page }) => {
@@ -135,6 +138,7 @@ test.describe("@live Live Monitoring with the real worker and model", () => {
     const frameId = Number(infoText![1]);
     expect(frameId % 3).toBe(0);
     const stroke = await page.evaluate(() => {
+      const COLORS = [[34, 197, 94], [45, 212, 191], [167, 139, 250], [245, 158, 11]]; const isStroke = (r: number, g: number, b: number) => COLORS.some(([x, y, z]) => Math.abs(r - x!) + Math.abs(g - y!) + Math.abs(b - z!) < 40);
       const c = document.querySelector<HTMLCanvasElement>('[data-testid="video-canvas"]')!;
       const { width, height } = c;
       const d = c.getContext("2d")!.getImageData(0, 0, width, height).data;
@@ -142,8 +146,8 @@ test.describe("@live Live Monitoring with the real worker and model", () => {
       for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
           const i = (y * width + x) * 4;
-          // CONFIRMED track stroke (#22c55e); labels use neutral text so they do not match.
-          if (d[i]! < 90 && d[i + 1]! > 170 && d[i + 2]! < 140) {
+          // Track stroke colour = track/identity state (green, teal when registered, violet when recognised, amber when ambiguous).
+          if (isStroke(d[i]!, d[i + 1]!, d[i + 2]!)) {
             n++;
             if (x < x1) x1 = x;
             if (y < y1) y1 = y;
@@ -323,10 +327,11 @@ test.describe("@live access control", () => {
 // ---------------------------------------------------------------------------------------------
 const greenPixels = (page: Page) =>
   page.evaluate(() => {
+    const COLORS = [[34, 197, 94], [45, 212, 191], [167, 139, 250], [245, 158, 11]]; const isStroke = (r: number, g: number, b: number) => COLORS.some(([x, y, z]) => Math.abs(r - x!) + Math.abs(g - y!) + Math.abs(b - z!) < 40);
     const c = document.querySelector<HTMLCanvasElement>('[data-testid="video-canvas"]')!;
     const d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
     let n = 0;
-    for (let i = 0; i < d.length; i += 4) if (d[i]! < 90 && d[i + 1]! > 170 && d[i + 2]! < 140) n++;
+    for (let i = 0; i < d.length; i += 4) if (isStroke(d[i]!, d[i + 1]!, d[i + 2]!)) n++;
     return n;
   });
 
@@ -420,5 +425,140 @@ test.describe("@live Phase 2 tracking", () => {
     await expect(viewport(page)).toHaveAttribute("data-view", "completed", { timeout: 45_000 });
     await expect(page.getByTestId("track-chip-1")).toBeVisible();
     await expect(page.getByTestId("track-list").getByRole("button")).toHaveCount(1);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Phase 3: recognition + automatic registration + visitor gallery (real detector, tracker,
+// landmarks, SFace embedder, identity manager, PostgreSQL and face-image store).
+// Person A = the public-domain portrait; person B = two different LFW photographs of one person.
+// ---------------------------------------------------------------------------------------------
+const personB = path.join(__dirname, "..", "..", "datasets", "e2e", "person-b2.mp4");
+
+async function clearVisitors(request: APIRequestContext) {
+  const headers = await bearer(request);
+  const list = await (await request.get("/api/v1/visitors?limit=100", { headers })).json();
+  for (const v of list.items as { id: string }[]) {
+    expect((await request.delete(`/api/v1/visitors/${v.id}`, { headers })).status()).toBe(204);
+  }
+}
+
+async function processClip(page: Page, label: string) {
+  await page.goto("/live");
+  await expect(page.getByTestId("start-button")).toBeEnabled({ timeout: 45_000 });
+  await source(page, label).check({ force: true });
+  await page.getByTestId("start-button").click();
+  await expect(viewport(page)).toHaveAttribute("data-view", /connecting|processing/);
+  await expect(viewport(page)).toHaveAttribute("data-view", "completed", { timeout: 60_000 });
+}
+
+test.describe("@live Phase 3 recognition", () => {
+  test.beforeEach(async ({ request }) => {
+    await stopAnythingRunning(request);
+    await clearVisitors(request);
+  });
+
+  test("@live registers a new face, shows it in the gallery, recognises it again without a duplicate, and survives a restart", async ({ page, request }) => {
+    test.setTimeout(240_000);
+    await page.goto("/live");
+    await signIn(page);
+
+    // 1-5: process a known video; the first reliable face is registered automatically.
+    await expect(page.getByTestId("start-button")).toBeEnabled({ timeout: 45_000 });
+    await source(page, "E2E alignment clip").check({ force: true });
+    await page.getByTestId("start-button").click();
+    await expect(page.getByText("New visitor registered: V00001")).toBeVisible({ timeout: 40_000 });
+    await expect(viewport(page)).toHaveAttribute("data-view", "completed", { timeout: 40_000 });
+    await expect(page.getByTestId("rec-registered")).toHaveText("1");
+    await expect(page.getByTestId("recognition-panel")).toContainText("Visitor labels (V…) are persistent");
+    // the track keeps its own temporary number; the visitor id is a different thing
+    await expect(page.getByTestId("track-chip-1")).toBeVisible();
+    await expect(page.getByTestId("chip-visitor-1")).toHaveText("V00001");
+
+    // 6-7: the visitor is in the gallery with a real, authenticated thumbnail
+    await nav(page).getByRole("link", { name: "Visitors" }).click();
+    const card = page.getByTestId("visitor-card-1");
+    await expect(card).toBeVisible();
+    const thumb = card.getByRole("img", { name: /Face of visitor V00001/ });
+    await expect.poll(() => thumb.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0)).toBe(true);
+
+    // 8: details
+    await card.click();
+    const drawer = page.getByTestId("visitor-drawer");
+    await expect(drawer.getByTestId("drawer-title")).toHaveText("V00001");
+    await expect(drawer.getByTestId("history-item")).toHaveCount(1);
+    await expect(drawer.getByTestId("history-item").first()).toContainText("registered here");
+    await expect(drawer).not.toContainText(/embedding vector/i);
+    await drawer.getByTestId("drawer-close").click();
+    await expect(drawer).toHaveCount(0);
+
+    // 9-10: the same person in a second processing session is recognised, not registered again
+    await processClip(page, "E2E alignment clip");
+    await expect(page.getByText("Visitor recognized: V00001")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("rec-registered")).toHaveText("0");
+    await expect(page.getByTestId("rec-recognized")).toHaveText("1");
+    await nav(page).getByRole("link", { name: "Visitors" }).click();
+    await expect(page.getByTestId("visitor-grid").getByRole("button", { name: /Open visitor/ })).toHaveCount(1);
+    await page.getByTestId("visitor-card-1").click();
+    await expect(page.getByTestId("drawer-sessions")).toHaveText("2");
+
+    // API truth: one visitor, no embeddings or file paths anywhere, image only with a token
+    const headers = await bearer(request);
+    const list = await (await request.get("/api/v1/visitors", { headers })).json();
+    expect(list.total).toBe(1);
+    expect(JSON.stringify(list)).not.toMatch(/vector|embedding|image_path|\.jpg/i);
+    const id: string = list.items[0].id;
+    expect((await request.get(`/api/v1/visitors/${id}/image`)).status()).toBe(401);
+    const image = await request.get(`/api/v1/visitors/${id}/image`, { headers });
+    expect(image.status()).toBe(200);
+    expect(image.headers()["content-type"]).toBe("image/jpeg");
+    expect(image.headers()["cache-control"]).toContain("no-store");
+
+    // 11: records persist across an application restart (API + worker), and recognition still works
+    await restartApiStack();
+    await page.goto("/visitors");
+    await expect(page.getByTestId("visitor-card-1")).toBeVisible({ timeout: 30_000 });
+    const again = page.getByTestId("visitor-card-1").getByRole("img", { name: /Face of visitor V00001/ });
+    await expect.poll(() => again.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0)).toBe(true);
+    await processClip(page, "E2E alignment clip");
+    await expect(page.getByTestId("rec-registered")).toHaveText("0"); // still no duplicate
+    await expect(page.getByTestId("rec-recognized")).toHaveText("1");
+    expect((await (await request.get("/api/v1/visitors", { headers: await bearer(request) })).json()).total).toBe(1);
+  });
+
+  test("@live two different people become two visitors; a different photo of the same person is recognised", async ({ page, request }) => {
+    test.skip(!fs.existsSync(personB), "LFW fixtures are not on this machine (datasets/lfw)");
+    test.setTimeout(240_000);
+    await page.goto("/live");
+    await signIn(page);
+    await expect(page.getByTestId("start-button")).toBeEnabled({ timeout: 45_000 });
+
+    await source(page, "E2E alignment clip").check({ force: true }); // person A
+    await page.getByTestId("start-button").click();
+    await expect(page.getByText("New visitor registered: V00001")).toBeVisible({ timeout: 40_000 });
+    await expect(viewport(page)).toHaveAttribute("data-view", "completed", { timeout: 40_000 });
+
+    await processClip(page, "E2E person B photo 1"); // a different person
+    await expect(page.getByText("New visitor registered: V00002")).toBeVisible({ timeout: 10_000 });
+
+    await processClip(page, "E2E person B photo 2"); // person B again, another photograph
+    await expect(page.getByText("Visitor recognized: V00002")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("rec-registered")).toHaveText("0");
+
+    const list = await (await request.get("/api/v1/visitors?sort=number&order=asc", { headers: await bearer(request) })).json();
+    expect(list.items.map((v: { label: string }) => v.label)).toEqual(["V00001", "V00002"]); // no third visitor
+    await page.goto("/visitors");
+    await expect(page.getByTestId("visitor-grid").getByRole("button", { name: /Open visitor/ })).toHaveCount(2);
+    await page.getByTestId("visitor-search").fill("V00002");
+    await page.getByTestId("visitor-search-submit").click();
+    await expect(page.getByTestId("visitors-range")).toContainText("of 1");
+
+    // erasing a visitor removes it everywhere
+    await page.getByTestId("visitor-card-2").click();
+    await page.getByTestId("drawer-erase").click();
+    await page.getByTestId("erase-confirm").click();
+    await expect(page.getByText("Visitor erased")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "No visitors match your search" })).toBeVisible();
+    expect((await request.get(`/api/v1/visitors/V00002`, { headers: await bearer(request) })).status()).toBe(404);
   });
 });

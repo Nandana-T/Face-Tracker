@@ -36,8 +36,9 @@ import cv2
 from app.schemas.detection import DetectionResult, FaceBox
 from app.schemas.tracking import TrackingSummary, TrackOut
 from app.vision.detection.interfaces import DetectorError, FaceDetector, InvalidFrame
+from app.vision.recognition.service import RecognitionRunner, make_job
 from app.vision.sources.interfaces import Frame, SourceError, VideoSource
-from app.vision.tracking.interfaces import FaceTracker, TrackerOutput
+from app.vision.tracking.interfaces import FaceTracker, TrackerOutput, TrackState
 
 logger = logging.getLogger("katomaran.pipeline")
 
@@ -212,8 +213,12 @@ class ProcessingPipeline:
         on_stats: StatsCallback | None = None,
         clock: Callable[[], float] = time.monotonic,
         tracker: FaceTracker | None = None,
+        recognition: RecognitionRunner | None = None,
+        recognition_pad: float = 0.6,
     ) -> None:
         self.tracker = tracker
+        self.recognition = recognition
+        self._recognition_pad = recognition_pad
         self.source = source
         self.detector = detector
         self.settings = settings
@@ -321,6 +326,11 @@ class ProcessingPipeline:
                 self.reader_joined = not self._reader.is_alive()
                 if not self.reader_joined:
                     logger.error("Frame reader thread did not terminate within 5 s")
+            if self.recognition is not None:
+                try:
+                    self.recognition.close()
+                except Exception:  # noqa: BLE001
+                    logger.exception("Recognition shutdown failed")
             if self.tracker is not None:
                 try:
                     self.tracker.reset()
@@ -377,6 +387,7 @@ class ProcessingPipeline:
                     return Outcome("ERROR", exc.code, str(exc))
                 inference_ms = getattr(self.detector, "last_inference_ms", None) or elapsed_ms
                 track_out, tracking_ms = self._track(frame, faces)
+                self._recognize(frame, track_out)
                 result = to_result(frame, faces, inference_ms, track_out, tracking_ms)
                 st = self.stats
                 st.frames_processed += 1
@@ -419,6 +430,36 @@ class ProcessingPipeline:
         self._publish_tracking_stats(out, elapsed_ms)
         return out, elapsed_ms
 
+    def _recognize(self, frame: Frame, out: TrackerOutput | None) -> None:
+        """Hand confirmed, currently detected tracks to the recognition thread (bounded, never blocks)."""
+        runner = self.recognition
+        if runner is None or out is None:
+            return
+        try:
+            candidates = {
+                t.track_id: t
+                for t in out.tracks
+                if t.state is TrackState.CONFIRMED
+                and t.observed
+                and t.detection_confidence is not None
+            }
+            for track_id, seq in runner.scheduler.select(sorted(candidates), frame.timestamp_ms):
+                t = candidates[track_id]
+                runner.submit(
+                    make_job(
+                        frame.pixels,
+                        t.bbox,
+                        track_id,
+                        seq,
+                        float(t.detection_confidence or 0.0),
+                        frame.timestamp_ms,
+                        frame.index,
+                        self._recognition_pad,
+                    )
+                )
+        except Exception:  # noqa: BLE001 - recognition problems never stop detection/tracking
+            logger.exception("Could not schedule recognition")
+
     def _publish_tracking_stats(self, out: TrackerOutput, elapsed_ms: float) -> None:
         st = self.stats
         c = out.counts
@@ -445,7 +486,13 @@ class ProcessingPipeline:
             self._last_stats = now
             self._on_stats(self._snapshot())
 
+    def final_snapshot(self) -> dict[str, Any]:
+        return self._snapshot()
+
     def _snapshot(self) -> dict[str, Any]:
         snap = self.stats.snapshot()
+        if self.recognition is not None:
+            snap.update(self.recognition.stats.snapshot())
+            snap["recog_enabled"] = 1
         snap["corrupt_frames"] += int(getattr(self.source, "corrupt_frames", 0))
         return snap

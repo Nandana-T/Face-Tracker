@@ -36,7 +36,11 @@ def make_settings(tmp_path: Path, **overrides: Any) -> Settings:
 
 def make_config(tmp_path: Path, **video: Any) -> AppConfig:
     return AppConfig.model_validate(
-        {"video": video, "logging": {"events_file": str(tmp_path / "logs" / "events.log")}}
+        {
+            "video": video,
+            "logging": {"events_file": str(tmp_path / "logs" / "events.log")},
+            "recognition": {"faces_dir": str(tmp_path / "faces")},
+        }
     )
 
 
@@ -44,6 +48,7 @@ def make_full_config(tmp_path: Path, **sections: Any) -> AppConfig:
     """Config with arbitrary sections (video/detection/worker/stream...) plus a tmp events log."""
     data: dict[str, Any] = {"logging": {"events_file": str(tmp_path / "logs" / "events.log")}}
     data.update(sections)
+    data.setdefault("recognition", {}).setdefault("faces_dir", str(tmp_path / "faces"))
     return AppConfig.model_validate(data)
 
 

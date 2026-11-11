@@ -148,7 +148,60 @@ class StreamConfig(_Section):
 
 
 class RecognitionConfig(_Section):
-    similarity_threshold: float = Field(default=0.55, ge=-1, le=1)
+    """Face recognition and automatic registration (Phase 3). BIOMETRIC processing.
+
+    Thresholds are cosine similarities between L2-normalised embeddings. Their defaults come from the
+    LFW evaluation in docs/phase-3-report.md (not from other projects) and are deliberately
+    conservative: merging two different people is worse than waiting for another observation.
+    """
+
+    enabled: bool = True
+    model: str = "sface-2021dec"
+    # Optional override (relative to the models directory unless absolute) for the embedder file.
+    model_path: str | None = None
+    # --- decision thresholds -------------------------------------------------------------------
+    # best similarity >= this (and a clear margin) => the face IS that registered visitor
+    similarity_threshold: float = Field(default=0.50, ge=-1, le=1)
+    # best similarity < this => the face is NOT any registered visitor (candidate for registration).
+    # Between the two the observation is "grey": no recognition, no registration - keep waiting.
+    novelty_threshold: float = Field(default=0.40, ge=-1, le=1)
+    # best - second-best visitor must exceed this, else the observation is AMBIGUOUS
+    ambiguity_margin: float = Field(default=0.05, ge=0, le=1)
+    # --- quality gate --------------------------------------------------------------------------
+    min_face_px: int = Field(default=40, ge=16, le=512)
+    min_detection_confidence: float = Field(default=0.6, ge=0, le=1)
+    max_yaw: float = Field(default=0.45, gt=0, le=2)
+    max_roll_degrees: float = Field(default=30, gt=0, le=90)
+    min_sharpness: float = Field(default=15, ge=0, le=10000)
+    min_quality_score: float = Field(default=0.3, ge=0, le=1)
+    landmark_pad: float = Field(default=0.6, ge=0, le=3)
+    # --- worker scheduling (embeddings are NOT computed for every face on every frame) --------
+    observation_interval_seconds: float = Field(default=0.5, gt=0, le=60)
+    warmup_observations: int = Field(default=6, ge=1, le=100)
+    refresh_interval_seconds: float = Field(default=5, gt=0, le=3600)
+    budget_ms_per_frame: float = Field(default=80, gt=0, le=5000)
+    queue_size: int = Field(default=8, ge=1, le=256)
+    crop_max_px: int = Field(default=192, ge=64, le=512)
+    # --- identity resolution (API side) ---------------------------------------------------------
+    vote_window: int = Field(default=8, ge=2, le=100)
+    recognize_votes: int = Field(default=2, ge=1, le=20)
+    switch_hysteresis: int = Field(default=2, ge=1, le=20)
+    # registration: first sufficiently reliable observations, all of them novel and mutually consistent
+    register_min_observations: int = Field(default=3, ge=1, le=50)
+    register_min_seconds: float = Field(default=0.8, ge=0, le=600)
+    register_min_quality: float = Field(default=0.35, ge=0, le=1)
+    register_self_consistency: float = Field(default=0.6, ge=-1, le=1)
+    max_embeddings_per_visitor: int = Field(default=5, ge=1, le=50)
+    index_sync_seconds: float = Field(default=30, gt=0, le=3600)
+    # --- storage / privacy -----------------------------------------------------------------------
+    faces_dir: str = "storage/faces"
+    retention_days: int = Field(default=0, ge=0, le=36500)  # 0 = keep until deleted via the API
+
+    @model_validator(mode="after")
+    def _thresholds_ordered(self) -> RecognitionConfig:
+        if self.novelty_threshold > self.similarity_threshold:
+            raise ValueError("novelty_threshold must not exceed similarity_threshold")
+        return self
 
 
 class TrackingConfig(_Section):

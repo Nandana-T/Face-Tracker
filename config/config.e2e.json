@@ -18,6 +18,18 @@
         "path": "datasets/e2e/long.mp4"
       },
       {
+        "id": "e2e-person-b1",
+        "label": "E2E person B photo 1",
+        "type": "file",
+        "path": "datasets/e2e/person-b1.mp4"
+      },
+      {
+        "id": "e2e-person-b2",
+        "label": "E2E person B photo 2",
+        "type": "file",
+        "path": "datasets/e2e/person-b2.mp4"
+      },
+      {
         "id": "e2e-broken",
         "label": "E2E broken file",
         "type": "file",
@@ -44,7 +56,9 @@
     "stop_timeout_seconds": 10
   },
   "recognition": {
-    "similarity_threshold": 0.55
+    "similarity_threshold": 0.50,
+    "novelty_threshold": 0.40,
+    "faces_dir": "datasets/e2e/faces"
   },
   "tracking": {
     "enabled": true,

@@ -1,5 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
-import type { FrameHeader, Track } from "@/lib/api-types";
+import type { FrameHeader, Track, TrackIdentity } from "@/lib/api-types";
+import { identityColor, identityLabel } from "@/lib/identity";
 import { containRect, formatConfidence, mapBox } from "@/lib/geometry";
 import { hitTest, trackLabel, trackStyle } from "@/lib/tracks";
 import { cn } from "@/lib/utils";
@@ -18,6 +19,8 @@ export interface VideoCanvasHandle {
   clear(): void;
   /** Changes what is drawn on top of the video and repaints the current frame. */
   setOverlay(options: OverlayOptions): void;
+  /** Recognition results per track id (session-scoped). `null` = recognition not running. */
+  setIdentities(identities: ReadonlyMap<number, TrackIdentity> | null): void;
 }
 
 interface VideoCanvasProps {
@@ -50,6 +53,7 @@ export const VideoCanvas = forwardRef<VideoCanvasHandle, VideoCanvasProps>(funct
   const wrapRef = useRef<HTMLDivElement>(null);
   const current = useRef<{ image: ImageBitmap; header: FrameHeader } | null>(null);
   const overlay = useRef<OverlayOptions>(DEFAULT_OVERLAY);
+  const identities = useRef<ReadonlyMap<number, TrackIdentity> | null>(null);
   const rafId = useRef<number | null>(null);
   const scheduled = useRef(false);
 
@@ -99,7 +103,11 @@ export const VideoCanvas = forwardRef<VideoCanvasHandle, VideoCanvasProps>(funct
         (a, b) => Number(a.track_id === opts.selectedId) - Number(b.track_id === opts.selectedId),
       );
       for (const t of ordered) {
+        const identity = identities.current?.get(t.track_id);
         const style = trackStyle(t, t.track_id === opts.selectedId);
+        // A recognised / newly registered / ambiguous face gets its own colour while it is detected.
+        const idColor = t.state === "CONFIRMED" && t.observed ? identityColor(identity) : null;
+        if (idColor && t.track_id !== opts.selectedId) style.color = idColor;
         const box = mapBox(t.bbox, header.frame_width, header.frame_height, drawn);
         ctx.setLineDash(style.dash.map((d) => d * dpr));
         ctx.lineWidth = Math.max(1, style.lineWidth * dpr);
@@ -107,7 +115,11 @@ export const VideoCanvas = forwardRef<VideoCanvasHandle, VideoCanvasProps>(funct
         ctx.strokeRect(box.x, box.y, box.w, box.h);
         ctx.setLineDash([]);
         // Neutral label text: the box colour carries the state, and text stays legible on any picture.
-        if (opts.labels) tag(ctx, trackLabel(t, tracks.length), box, drawn, dpr, "#f8fafc");
+        if (opts.labels) {
+          const recognising = identities.current !== null && t.state === "CONFIRMED" && t.observed;
+          const text = recognising ? identityLabel(t, identity) : trackLabel(t, tracks.length);
+          tag(ctx, text, box, drawn, dpr, "#f8fafc");
+        }
       }
       return;
     }
@@ -141,6 +153,10 @@ export const VideoCanvas = forwardRef<VideoCanvasHandle, VideoCanvasProps>(funct
       },
       setOverlay(options) {
         overlay.current = options;
+        schedule();
+      },
+      setIdentities(next) {
+        identities.current = next;
         schedule();
       },
     }),

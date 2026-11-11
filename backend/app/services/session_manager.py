@@ -36,6 +36,7 @@ from app.schemas.processing import (
     WorkerOut,
 )
 from app.schemas.tracking import TrackingFrameMeta
+from app.services.identity_manager import IdentityManager, parse_observation
 from app.services.session_store import (
     ActiveSessionExists,
     InvalidTransition,
@@ -69,6 +70,8 @@ class WorkerLink:
     worker_id: str = "unknown"
     model_available: bool | None = None
     model_detail: str | None = None
+    recognition_available: bool | None = None
+    recognition_detail: str | None = None
     last_seen: float = field(default_factory=time.monotonic)
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -121,6 +124,7 @@ class LiveSession:
     subscribers: set[Subscriber] = field(default_factory=set)
     last_persist: float = 0.0
     created_monotonic: float = field(default_factory=time.monotonic)
+    finishing: bool = False  # set once the session is being closed: late observations are ignored
     watchdogs: list[asyncio.Task[None]] = field(default_factory=list)
 
 
@@ -133,6 +137,8 @@ class SessionManager:
         self._env = env
         self.worker: WorkerLink | None = None
         self.live: LiveSession | None = None
+        # Phase 3: set by the application factory when recognition is enabled.
+        self.identity: IdentityManager | None = None
         self._lock = asyncio.Lock()
         self._background: set[asyncio.Task[Any]] = set()
 
@@ -164,6 +170,8 @@ class SessionManager:
                 worker_id=w.worker_id if w else None,
                 model_available=w.model_available if w else None,
                 model_detail=w.model_detail if w else None,
+                recognition_available=w.recognition_available if w else None,
+                recognition_detail=w.recognition_detail if w else None,
             ),
         )
 
@@ -212,6 +220,7 @@ class SessionManager:
                 frame_skip=snap.get("frame_skip", 0),
                 confidence_threshold=snap.get("confidence_threshold", 0),
                 tracking_enabled=bool(snap.get("tracking_enabled", False)),
+                recognition_enabled=bool(snap.get("recognition_enabled", False)),
             )
             if snap
             else None,
@@ -281,6 +290,12 @@ class SessionManager:
                         "confidence_threshold": d.confidence_threshold,
                         "input_size": d.input_size,
                         "tracking_enabled": self._config.tracking.enabled,
+                        "recognition_enabled": bool(
+                            self.identity is not None
+                            and self._config.recognition.enabled
+                            and self._config.tracking.enabled
+                            and worker.recognition_available
+                        ),
                     },
                 )
             except ActiveSessionExists as exc:
@@ -386,6 +401,10 @@ class SessionManager:
             link.model_available = bool(model.get("available"))
             detail = model.get("detail")
             link.model_detail = str(detail)[:300] if detail else None
+            recog = message.get("recognition") or {}
+            link.recognition_available = bool(recog.get("available"))
+            rdetail = recog.get("detail")
+            link.recognition_detail = str(rdetail)[:300] if rdetail else None
             logger.info(
                 "Worker registered",
                 extra={"worker_id": link.worker_id, "model_available": link.model_available},
@@ -437,12 +456,17 @@ class SessionManager:
     async def on_worker_frame(self, link: WorkerLink, data: bytes) -> None:
         link.last_seen = time.monotonic()
         live = self.live
-        if live is None or not live.subscribers:
+        if live is None:
             return
         try:
-            header, _ = P.unpack_frame(data)
+            header, payload = P.unpack_frame(data, require_jpeg=False)
         except P.ProtocolError as exc:
             logger.warning("Dropping malformed worker frame: %s", exc)
+            return
+        if header.get("kind") == P.KIND_OBSERVATION:
+            await self._on_observation(live, header, payload)
+            return
+        if not payload:
             return
         if header.get("session_id") != live.id:
             return
@@ -458,6 +482,37 @@ class SessionManager:
                 return
         for sub in list(live.subscribers):
             sub.push_frame(data)
+
+    async def _on_observation(self, live: LiveSession, header: dict[str, Any], crop: bytes) -> None:
+        """Recognition observation from the worker -> identity decision -> browser events."""
+        identity = self.identity
+        if identity is None or live.finishing or header.get("session_id") != live.id:
+            return  # unknown/old session (delayed message) or recognition not configured
+        try:
+            obs = parse_observation(header, crop, identity.dim)
+        except ValueError as exc:
+            logger.warning("Dropping invalid observation: %s", exc)
+            return
+        try:
+            events = await asyncio.to_thread(identity.observe, obs)
+        except Exception:
+            logger.exception("Identity resolution failed")
+            return
+        for event in events:
+            self._broadcast_text(live, event.to_message())
+            if event.kind in ("registered", "recognized", "ambiguous", "failed"):
+                log_event(
+                    f"identity.{event.kind}",
+                    session_id=live.id,
+                    track_id=event.track_id,
+                    visitor_number=event.visitor_number,
+                    reason=event.reason,
+                )
+
+    def identity_snapshot(self, session_id: str) -> list[dict[str, Any]]:
+        if self.identity is None:
+            return []
+        return [e.to_message() for e in self.identity.snapshot(session_id)]
 
     async def _on_running(self, live: LiveSession) -> None:
         row = await asyncio.to_thread(self._store.get, live.id)
@@ -500,6 +555,11 @@ class SessionManager:
     ) -> None:
         if self.live is not live:
             return
+        live.finishing = True
+        if self.identity is not None:
+            # Identity associations are persisted BEFORE the session is marked finished, so anybody
+            # who sees COMPLETED/STOPPED/ERROR also sees what recognition concluded.
+            await asyncio.to_thread(self.identity.end_session, live.id)
         for task in live.watchdogs:
             if task is not asyncio.current_task():
                 task.cancel()

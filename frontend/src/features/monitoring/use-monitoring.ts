@@ -5,10 +5,13 @@ import { ApiError, api, streamUrl } from "@/lib/api";
 import {
   ACTIVE_STATES,
   type FrameHeader,
+  type IdentityEventMessage,
   type SessionOut,
   type SessionStats,
   type Track,
+  type TrackIdentity,
 } from "@/lib/api-types";
+import { noticeFor, noticeKey } from "@/lib/identity";
 import { LiveStream, type LinkState } from "@/lib/live-stream";
 import type { OverlayOptions, VideoCanvasHandle } from "./video-canvas";
 
@@ -58,6 +61,12 @@ export function useMonitoring(canvas: RefObject<VideoCanvasHandle | null>) {
   const overlayRef = useRef<OverlayOptions>({ show: true, labels: true, selectedId: null });
   const [selected, setSelected] = useState<SelectedTrack | null>(null);
   const selectedId = useRef<number | null>(null);
+  // Recognition results of THIS session only (track ids restart in every session).
+  const identityMap = useRef(new Map<number, TrackIdentity>());
+  const noticed = useRef(new Set<string>());
+  const [identities, setIdentities] = useState<ReadonlyMap<number, TrackIdentity>>(new Map());
+  const [registeredThisSession, setRegisteredThisSession] = useState(0);
+  const [recognisedTracks, setRecognisedTracks] = useState(0);
 
   const sources = useQuery({
     queryKey: ["processing", "sources"],
@@ -75,9 +84,42 @@ export function useMonitoring(canvas: RefObject<VideoCanvasHandle | null>) {
     setSession((prev) => (prev && prev.id !== next.id && isActive(prev) ? prev : next));
   }, []);
 
+  const resetIdentities = useCallback(() => {
+    identityMap.current = new Map();
+    noticed.current = new Set();
+    setIdentities(new Map());
+    setRegisteredThisSession(0);
+    setRecognisedTracks(0);
+    canvas.current?.setIdentities(null);
+  }, [canvas]);
+
+  const applyIdentity = useCallback(
+    (id: string, e: IdentityEventMessage, replay: boolean) => {
+      if (e.session_id !== id) return; // never apply another session's tracks
+      const next = new Map(identityMap.current);
+      next.set(e.track_id, { state: e.state, visitor: e.visitor });
+      identityMap.current = next;
+      canvas.current?.setIdentities(next);
+      setIdentities(next);
+      const states = [...next.values()];
+      setRegisteredThisSession(states.filter((v) => v.state === "REGISTERED").length);
+      setRecognisedTracks(states.filter((v) => v.state === "RECOGNIZED").length);
+      const notice = replay ? null : noticeFor(e);
+      const key = noticeKey(e);
+      if (!notice || noticed.current.has(key)) return;
+      noticed.current.add(key);
+      toast[notice.level === "info" ? "message" : notice.level](notice.title, {
+        description: notice.description,
+        id: key,
+      });
+    },
+    [canvas],
+  );
+
   const attach = useCallback(
     (id: string) => {
       detach();
+      resetIdentities();
       arrivals.current = [];
       const s = new LiveStream(
         {
@@ -85,6 +127,7 @@ export function useMonitoring(canvas: RefObject<VideoCanvasHandle | null>) {
         },
         {
           onSession: applySession,
+          onIdentity: (e, replay) => applyIdentity(id, e, replay),
           onStats: (stats: SessionStats) =>
             setSession((prev) => (prev && prev.id === id ? { ...prev, stats } : prev)),
           onFrame: (image, header) => {
@@ -99,7 +142,7 @@ export function useMonitoring(canvas: RefObject<VideoCanvasHandle | null>) {
       stream.current = s;
       s.connect();
     },
-    [applySession, detach, canvas],
+    [applySession, detach, canvas, resetIdentities, applyIdentity],
   );
 
   // Rehydrate after navigation/reload: processing continues server-side while the page is closed.
@@ -267,6 +310,9 @@ export function useMonitoring(canvas: RefObject<VideoCanvasHandle | null>) {
     startError,
     active,
     tracks,
+    identities,
+    registeredThisSession,
+    recognisedTracks,
     trackingOn,
     showOverlay,
     setShowOverlay,

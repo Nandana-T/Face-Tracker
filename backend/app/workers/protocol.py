@@ -23,6 +23,9 @@ MSG_ACCEPTED = "session.accepted"
 MSG_STATE = "session.state"
 MSG_STATS = "session.stats"
 MSG_ENDED = "session.ended"
+# Binary worker -> API message with header {"kind": "observation", ...}: one face embedding of one
+# track (recognition), optionally followed by a small JPEG crop. Never relayed to browsers.
+KIND_OBSERVATION = "observation"
 # API -> worker
 MSG_START = "session.start"
 MSG_STOP = "session.stop"
@@ -67,7 +70,7 @@ def pack_frame(header: dict[str, Any], jpeg: bytes) -> bytes:
     return message
 
 
-def unpack_frame(message: bytes) -> tuple[dict[str, Any], bytes]:
+def unpack_frame(message: bytes, require_jpeg: bool = True) -> tuple[dict[str, Any], bytes]:
     if len(message) > MAX_FRAME_BYTES or len(message) < _LEN.size:
         raise ProtocolError("invalid frame size")
     (n,) = _LEN.unpack_from(message)
@@ -80,6 +83,6 @@ def unpack_frame(message: bytes) -> tuple[dict[str, Any], bytes]:
     if not isinstance(header, dict):
         raise ProtocolError("frame header must be an object")
     jpeg = message[_LEN.size + n :]
-    if not jpeg.startswith(b"\xff\xd8"):
+    if (require_jpeg or jpeg) and not jpeg.startswith(b"\xff\xd8"):
         raise ProtocolError("frame payload is not a JPEG")
     return header, jpeg

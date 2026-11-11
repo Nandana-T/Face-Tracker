@@ -44,8 +44,8 @@ export function OnboardingCard() {
     },
     {
       title: "Start processing",
-      detail: "Video ingestion and face detection arrive in Phase 1.",
-      state: "later",
+      detail: "Open Live Monitoring, pick a source and press Start processing.",
+      state: "todo",
     },
   ];
 

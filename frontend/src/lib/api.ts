@@ -4,9 +4,13 @@ import type {
   HealthResponse,
   PublicConfigResponse,
   ReadinessResponse,
+  RecognitionStatus,
   SessionOut,
   SourcesResponse,
   SystemStatusResponse,
+  VisitorDetail,
+  VisitorList,
+  VisitorSort,
 } from "./api-types";
 
 /** Centralised API base URL. Dev: "/api/v1" through the Vite proxy. Prod: set VITE_API_BASE_URL. */
@@ -35,7 +39,7 @@ export class ApiError extends Error {
 async function send(
   path: string,
   signal?: AbortSignal,
-  init?: { method: "POST"; body?: unknown },
+  init?: { method: "POST" | "DELETE"; body?: unknown },
 ): Promise<Response> {
   const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
   try {
@@ -105,6 +109,21 @@ export function streamUrl(sessionId: string, ticket?: string): string {
   return ticket ? `${url}?ticket=${encodeURIComponent(ticket)}` : url;
 }
 
+export interface VisitorQuery {
+  limit: number;
+  offset: number;
+  q?: string;
+  sort: VisitorSort;
+  order: "asc" | "desc";
+}
+
+/** Authenticated image fetch (an <img src> cannot send the bearer token) -> a short-lived blob URL. */
+async function fetchImageBlob(path: string, signal?: AbortSignal): Promise<Blob> {
+  const response = await send(path, signal);
+  if (!response.ok) throw await toHttpError(response);
+  return response.blob();
+}
+
 export interface AuthStatus {
   required: boolean;
   authenticated: boolean;
@@ -129,6 +148,27 @@ export const api = {
   /** 202 = new session, 200 = the identical session was already active (idempotent). */
   startSession: (sourceId: string) => postJson<SessionOut>("/sessions", { source_id: sourceId }),
   stopSession: (id: string) => postJson<SessionOut>(`/sessions/${encodeURIComponent(id)}/stop`),
+
+  visitors: (query: VisitorQuery, signal?: AbortSignal) => {
+    const params = new URLSearchParams({
+      limit: String(query.limit),
+      offset: String(query.offset),
+      sort: query.sort,
+      order: query.order,
+    });
+    if (query.q?.trim()) params.set("q", query.q.trim());
+    return getJson<VisitorList>(`/visitors?${params.toString()}`, signal);
+  },
+  visitor: (id: string, signal?: AbortSignal) =>
+    getJson<VisitorDetail>(`/visitors/${encodeURIComponent(id)}`, signal),
+  visitorImage: (id: string, signal?: AbortSignal) =>
+    fetchImageBlob(`/visitors/${encodeURIComponent(id)}/image`, signal),
+  async deleteVisitor(id: string): Promise<void> {
+    const response = await send(`/visitors/${encodeURIComponent(id)}`, undefined, { method: "DELETE" });
+    if (!response.ok) throw await toHttpError(response);
+  },
+  recognitionStatus: (signal?: AbortSignal) =>
+    getJson<RecognitionStatus>("/recognition/status", signal),
 
   health: (signal?: AbortSignal) => getJson<HealthResponse>("/health", signal),
 
