@@ -25,10 +25,9 @@ from app.core.security import AuthService
 from app.core.settings import Settings, get_settings
 from app.db.session import create_db_engine, create_session_factory
 from app.services.analytics import AnalyticsService
+from app.services.blob_factory import build_stores
 from app.services.event_recorder import EventRecorder
-from app.services.evidence_store import EvidenceStore
 from app.services.identity_manager import IdentityManager
-from app.services.image_store import LocalImageStore
 from app.services.session_manager import SessionManager
 from app.services.session_store import SessionStore
 from app.services.visit_service import VisitService
@@ -111,13 +110,14 @@ def create_app(
     app.state.auth = AuthService(settings)
     app.state.sessions = SessionManager(config, SessionStore(app.state.session_factory))
     app.state.identity = None
+    faces_store, evidence_store, storage_name = build_stores(settings, config)
+    app.state.storage_backend = storage_name
     if config.recognition.enabled:
-        from app.core.paths import resolve_path
         from app.vision.recognition.registry import SFACE
 
         app.state.identity = IdentityManager(
             app.state.session_factory,
-            LocalImageStore(resolve_path(config.recognition.faces_dir)),
+            faces_store,
             config.recognition,
             SFACE.key,
             SFACE.embedding_dim,
@@ -126,9 +126,7 @@ def create_app(
 
     app.state.visits = None
     if config.visits.enabled:
-        recorder = EventRecorder(
-            app.state.session_factory, EvidenceStore(config.evidence_path), config.visits
-        )
+        recorder = EventRecorder(app.state.session_factory, evidence_store, config.visits)
         app.state.visits = VisitService(config.visits, recorder)
         app.state.sessions.attach_visits(app.state.visits)
 

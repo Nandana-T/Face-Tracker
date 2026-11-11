@@ -1,0 +1,37 @@
+{
+  "scope": {
+    "since": null,
+    "until": null,
+    "source_id": null,
+    "session_id": null
+  },
+  "registered_visitors": 1,
+  "unique_visitors_in_scope": 1,
+  "returning_visitors_in_scope": 0,
+  "new_visitors_in_scope": 1,
+  "visits": 1,
+  "visits_without_identity": 0,
+  "entry_events": 1,
+  "terminal_events": 1,
+  "terminal_by_basis": {
+    "absence": 0,
+    "observation_ended": 1,
+    "interrupted": 0
+  },
+  "active_visits": 0,
+  "active_visits_temporarily_missing": 0,
+  "stale_open_visits": 0,
+  "unresolved_tracks": 0,
+  "generated_at": "2026-11-11T06:15:24.011+00:00",
+  "last_event_recorded_at": "2026-11-11T06:10:21.298032+00:00",
+  "definitions": {
+    "registered_visitors": "Persistent face identities currently registered (global, ignores the filters). Erased visitors are not counted.",
+    "unique_visitors_in_scope": "Distinct registered identities with at least one visit entering in scope. Faces that were not reliably recognised are not included.",
+    "returning_visitors_in_scope": "Unique visitors in scope with an in-scope visit in a session other than the one in which they were first registered.",
+    "visits": "Presence episodes (one visitor, one session). The same visitor can have many.",
+    "entry_events": "Logical entry events of the visits in scope (one per visit).",
+    "terminal_events": "Logical ends of the visits in scope: exits (left the view / observation ended) and interruptions. None is a verified physical departure.",
+    "active_visits": "Open visits of live sessions right now (date range ignored). Open rows of sessions that are not live are stale and not counted.",
+    "unresolved_tracks": "Historical diagnostic: evaluated tracks without a resolved identity. Never extra people."
+  }
+}

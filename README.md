@@ -2,7 +2,7 @@
 
 Detects, recognises, registers, tracks and counts unique visitors from video files and RTSP streams, with a real-time dashboard.
 
-> **Current state: Phase 5 (unique-visitor counting and analytics) on top of Phases 0-4, awaiting approval.** Everything marked ✅ exists and is tested. **Counts are registered face *identities*, visits and events from PostgreSQL - never a count of physical people**; faces the recognition gate did not resolve are never added to a unique count ([docs/phase-5-report.md](docs/phase-5-report.md)).
+> **Current state: Phase 6 (deployment readiness, integration hardening, submission package) on top of Phases 0-5, awaiting your approval for the external steps.** The software is verified locally, including a production-mode TLS run with a remote-style worker and a local RTSP-server integration. **No cloud service has been provisioned, the hosted database is still at migration `0002`, and the hackathon form has not been submitted** ([docs/phase-6-report.md](docs/phase-6-report.md)). Earlier state: Phase 5 (unique-visitor counting and analytics). Everything marked ✅ exists and is tested. **Counts are registered face *identities*, visits and events from PostgreSQL - never a count of physical people**; faces the recognition gate did not resolve are never added to a unique count ([docs/phase-5-report.md](docs/phase-5-report.md)).
 > Previous state: Phase 4 (visit lifecycle, entry/exit events, durable persistence).
 > The app detects faces, tracks them (temporary `#id` per session), **recognises/registers persistent visitors** (`V00124`) and records **visits**: one confirmed presence episode has one *entry* and one *exit*
 > event in PostgreSQL, as a face crop and in `events.log`. A track id is not a visitor id and neither is a visit id. The number of visits or events is never a number of people, and the UI never shows an invented number. Details and honest limitations: [docs/phase-4-report.md](docs/phase-4-report.md), [docs/phase-3-report.md](docs/phase-3-report.md),
@@ -25,11 +25,45 @@ Detects, recognises, registers, tracks and counts unique visitors from video fil
 | Unique registered-visitor counts (global / session / scope), returning visitors, entry/exit statistics, active visits with session-liveness, activity charts, source/session breakdowns, recognition-coverage diagnostics, database-backed aggregation, live refresh, read-only count reconciliation, Analytics + Overview pages | ✅ Phase 5 ([report](docs/phase-5-report.md), [ADR 0015](docs/decisions/0015-counting-semantics.md), [benchmark](docs/benchmarks/phase5-analytics.md)) |
 | RTSP hardening, per-user auth, deployment, final submission | Phases 6–7 (`docs/phase-roadmap.md`) |
 
+## Project objective
+Katomaran AI is an intelligent face tracker for visitor analytics: it **detects** faces in video files and RTSP streams, **tracks** them, **recognises** returning people and **registers** new ones automatically, logs every **entry and exit** with a timestamped face image (database, image storage and the mandatory `events.log`), and shows **unique registered-visitor counts** and analytics in a live dashboard. Counts are registered face *identities*, not verified physical people ([docs/phase-5-report.md](docs/phase-5-report.md)).
+
+## Demo and links
+* **Demo video (Loom/YouTube): TODO - not recorded yet. The submission is not complete until this link is here.** Plan: [docs/submission/demo-video-script.md](docs/submission/demo-video-script.md).
+* **Deployed frontend / API: TODO - not deployed.** Steps and blockers: [docs/deployment-guide.md](docs/deployment-guide.md). Local fallback: `scripts\start-all.ps1` + `scripts\start-frontend.ps1`.
+* **Repository:** TODO (push pending approval). Submission checklist: [docs/submission/submission-checklist.md](docs/submission/submission-checklist.md).
+* **Sample output** (safe: public-domain fixture, no real people): [docs/sample-output/](docs/sample-output/) - analytics, reconciliation, visits/events, `events.log` lines, entry/exit crops. Final evaluation on the real footage (aggregate only): [docs/final-evaluation.md](docs/final-evaluation.md).
+
 ## Architecture
 React SPA ⇄ FastAPI (`/api/v1`) ⇄ PostgreSQL, plus an independent **video worker** process that dials the API over a WebSocket
 (inference never runs inside the API; the worker needs no database credentials and no inbound port).
 Details: [architecture](docs/architecture.md) · [API](docs/api-contracts.md) · [testing](docs/testing-strategy.md) ·
 [deployment & D: policy](docs/deployment.md) · [privacy & security](docs/privacy-and-security.md) · [security runbook](docs/security-runbook.md) · [ADRs](docs/decisions/) · [AI/implementation notes](docs/ai-notes.md).
+
+### Cloud deployment architecture (prepared, not deployed)
+```
+Browser ── HTTPS/WSS ──► Vercel (static SPA)  ──►  Render: ONE lightweight FastAPI instance (no AI models)
+                                                    ├─ Supabase PostgreSQL (TLS, RLS)           migrations 0001..0004
+                                                    ├─ Supabase Storage PRIVATE bucket           faces/ + evidence/ (service-role key, server only)
+                                                    └─ /api/v1/worker/ws  ◄── WSS, token ── AI worker on YOUR machine (D:)
+                                                                                           models + camera/video; no DB or storage keys
+```
+Guide, free-tier limits (15-minute spin-down, ~1 min cold start, ephemeral disk), recovery table and rollback: [docs/deployment-guide.md](docs/deployment-guide.md). Image storage is switchable (`STORAGE_BACKEND=local|supabase`, [ADR 0016](docs/decisions/0016-private-object-storage.md)).
+
+### Hardware requirements (measured on an i5-1240P, CPU only, no GPU)
+| Component | Need | Measured |
+|---|---|---|
+| AI worker (per stream) | 4 CPU threads, ≈ 0.6–1 GB RAM | detector ≈ 55 ms/frame (78 ms at 4K), worker RSS 171–181 MB idle-to-active, 520–880 MB peak on 2.7K/4K footage; CPU ≈ 24 % of 16 threads at `frame_skip=2`; 4K runs about real time with no headroom. GPU: not measured |
+| API | any 512 MB host, no GPU | RSS ≈ 115 MB, never loads a model |
+| Database / storage | free tiers are enough for a demo | crops ≈ 7-15 KB; Supabase Free storage 1 GB |
+
+### Licensing notes
+YOLO face detector and the SFace/YuNet recognition models are downloaded by pinned checksum onto D: (never committed). SFace/YuNet files are Apache-2.0/MIT, but the **training data of the recognition weights is not documented** and InsightFace weights are non-commercial - treat the recognition stack as **hackathon/non-commercial** ([ADR 0013](docs/decisions/0013-recognition-model-and-licensing.md), [ADR 0007](docs/decisions/)). LFW (evaluation) is a research benchmark kept local and not redistributed. The only image in the repository is a NASA public-domain portrait used as a test fixture.
+
+### Accuracy limitations (read before quoting a number)
+* **Registered identities are counted exactly; physical people are not.** Faces that fail the quality gate (blur, profile, small, masks) are never identified; duplicates and misses are possible (labelled LFW-based test: 14 true people, 14 registered, but 1 duplicate and 1 miss cancelling out; 0 wrong merges).
+* The hackathon footage has **no person-level labels**: only operational diagnostics exist for it (9 of 74 confirmed tracks resolved to an identity).
+* Exit events are the last sighting or "observation ended", never a verified departure. RTSP was tested against a local RTSP **server**, **not a physical camera**. One shared admin role; single API instance (no high availability).
 
 ## Prerequisites (Windows 11 / PowerShell; Linux works with the equivalent commands)
 * Node.js 20+ and npm
@@ -80,7 +114,7 @@ disables Start. Leaving the page does not stop a session; Stop does.
 .\scripts\check.ps1 -SkipE2E
 .\scripts\test-backend.ps1 [-Unit]    .\scripts\test-frontend.ps1 [-E2E]
 ```
-Last full run (this machine, 2026-11-11): backend **538 passed** · frontend **245 passed** · Playwright **30 passed** (authenticated real stack with the real models, incl. application restarts, crash recovery and the analytics workflow) · **813 total** (Phase 4 baseline 746) ·
+Last full run (this machine, 2026-11-11): backend **565 passed** · frontend **245 passed** · Playwright **30 passed** (authenticated real stack with the real models, incl. application restarts, crash recovery and the analytics workflow) · **840 total** (Phase 5 baseline 813; a known Starlette-TestClient websocket flake, present on a clean HEAD too, is noted in the Phase 6 report) · local checks: `scripts\verify_remote_path.py` (production mode + TLS + remote-style worker, 19/19), `scripts\verify_rtsp_local.py` (local RTSP server, 12/12), `scripts\smoke_deployed.py` (16/16 locally) ·
 ruff, mypy (strict), ESLint, `tsc`, production build clean. Breakdown and what the tests do *not* prove: [docs/testing-strategy.md](docs/testing-strategy.md).
 Benchmark: `.venv\Scripts\python.exe backend\benchmarks\benchmark_detector.py` then `render_report.py`.
 

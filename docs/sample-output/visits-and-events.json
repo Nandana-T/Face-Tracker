@@ -1,0 +1,32 @@
+[
+  {
+    "visit": {
+      "id": "ee431cb9136aee7a4aa795b6f8576bda",
+      "visitor_label": "V00001",
+      "state": "CLOSED",
+      "source": "Local RTSP (MediaMTX)",
+      "entry_time": "2026-11-11T06:10:10.295174+00:00",
+      "exit_time": "2026-11-11T06:10:21.285571+00:00",
+      "exit_basis": "observation_ended",
+      "closure_reason": "manual_stop"
+    },
+    "events": [
+      {
+        "id": "ad5187e385e8b3ddcee72673142d321a",
+        "type": "entry",
+        "event_time": "2026-11-11T06:10:10.295174+00:00",
+        "image_status": "STORED",
+        "image_kind": "observation",
+        "persistence_status": "DELIVERED"
+      },
+      {
+        "id": "d33319678274e54c0c1603a8ed4f8f90",
+        "type": "exit",
+        "event_time": "2026-11-11T06:10:21.285571+00:00",
+        "image_status": "STORED",
+        "image_kind": "last_good_observation",
+        "persistence_status": "DELIVERED"
+      }
+    ]
+  }
+]

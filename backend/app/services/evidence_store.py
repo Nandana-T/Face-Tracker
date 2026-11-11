@@ -8,17 +8,17 @@ half-written file under the final name); references are validated and confined t
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
-import os
 import re
 import time
-import uuid
 from datetime import datetime
 from pathlib import Path
 
 import cv2
 import numpy as np
 
+from app.services.blob_store import BlobBackend, BlobError, LocalBlobBackend
 from app.services.image_store import ImageStoreError, validate_jpeg
 
 _NAME = re.compile(r"^(entries|exits)/\d{4}-\d{2}-\d{2}/[0-9a-f]{32}\.jpg$")
@@ -49,90 +49,92 @@ def validate_evidence(jpeg: bytes) -> np.ndarray:
 
 
 class EvidenceStore:
-    def __init__(self, root: Path) -> None:
-        self.root = root.resolve()
-        self.root.mkdir(parents=True, exist_ok=True)
+    """Entry/exit evidence on a ``BlobBackend`` (local folder or Supabase private storage)."""
+
+    def __init__(self, root: Path | None = None, backend: BlobBackend | None = None) -> None:
+        if backend is None:
+            if root is None:
+                raise ValueError("a root folder or a backend is required")
+            backend = LocalBlobBackend(root)
+        self.backend = backend
+
+    @property
+    def root(self) -> Path:
+        """The local folder (local backend only; remote storage has none)."""
+        root: Path | None = getattr(self.backend, "root", None)
+        if root is None:
+            raise RuntimeError("remote storage has no local root")
+        return root
 
     @staticmethod
     def relative_path(event_type: str, event_id: str, when: datetime) -> str:
         folder = "entries" if event_type == "entry" else "exits"
         return f"{folder}/{when.strftime('%Y-%m-%d')}/{event_id}.jpg"
 
-    def _resolve(self, relative: str) -> Path:
+    @staticmethod
+    def _check(relative: str) -> None:
         if not _NAME.match(relative):
             raise ImageStoreError("invalid evidence reference")
-        path = (self.root / relative).resolve()
-        if self.root not in path.parents:
-            raise ImageStoreError("path escapes the evidence root")
-        return path
 
     def save(self, relative: str, jpeg: bytes) -> str:
-        """Validate and store; returns the sha256 of the stored bytes. Idempotent: an existing file
+        """Validate and store; returns the sha256 of the stored bytes. Idempotent: an existing object
         for the same event id is kept (an event's evidence never changes)."""
-        path = self._resolve(relative)
-        if path.is_file():
-            return hashlib.sha256(path.read_bytes()).hexdigest()
-        validate_evidence(jpeg)
-        partial = path.with_name(f"{path.name}.{uuid.uuid4().hex[:8]}.part")  # unique per writer
+        self._check(relative)
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with partial.open("wb") as handle:
-                handle.write(jpeg)
-                handle.flush()
-                os.fsync(handle.fileno())
-            partial.replace(path)
-        except OSError as exc:
-            partial.unlink(missing_ok=True)
-            if path.is_file():  # a concurrent writer of the same event won the race: same evidence
-                return hashlib.sha256(path.read_bytes()).hexdigest()
+            if self.backend.exists(relative):
+                return hashlib.sha256(self.backend.get(relative)).hexdigest()
+        except BlobError as exc:
+            raise EvidenceWriteError(f"could not reach the evidence store: {exc}") from exc
+        validate_evidence(jpeg)
+        try:
+            self.backend.put(relative, jpeg)
+        except BlobError as exc:
             raise EvidenceWriteError(f"could not write evidence: {exc}") from exc
         return hashlib.sha256(jpeg).hexdigest()
 
     def read(self, relative: str) -> bytes:
+        self._check(relative)
         try:
-            return self._resolve(relative).read_bytes()
-        except OSError as exc:
+            return self.backend.get(relative)
+        except BlobError as exc:
             raise ImageStoreError("evidence not found") from exc
 
     def exists(self, relative: str) -> bool:
         try:
-            return self._resolve(relative).is_file()
-        except ImageStoreError:
+            self._check(relative)
+            return self.backend.exists(relative)
+        except (ImageStoreError, BlobError):
             return False
 
     def sha256(self, relative: str) -> str | None:
         try:
-            return hashlib.sha256(self._resolve(relative).read_bytes()).hexdigest()
-        except (OSError, ImageStoreError):
+            self._check(relative)
+            return hashlib.sha256(self.backend.get(relative)).hexdigest()
+        except (ImageStoreError, BlobError):
             return None
 
     def delete(self, relative: str) -> bool:
-        path = self._resolve(relative)
-        existed = path.is_file()
-        path.unlink(missing_ok=True)
-        return existed
+        self._check(relative)
+        try:
+            return self.backend.delete(relative)
+        except BlobError as exc:
+            raise ImageStoreError(f"could not delete evidence: {exc}") from exc
 
     def all_files(self) -> list[tuple[str, float]]:
-        """(relative path, mtime) of every evidence file; stray ``.part`` files are listed too so
-        reconciliation can remove them."""
+        """(relative path, mtime) of every evidence object; stray ``.part`` files (local only) are listed
+        too so reconciliation can remove them."""
         out: list[tuple[str, float]] = []
         for top in ("entries", "exits"):
-            base = self.root / top
-            if not base.is_dir():
-                continue
-            for day in base.iterdir():
-                if not day.is_dir():
-                    continue
-                for f in day.iterdir():
-                    if f.is_file():
-                        out.append((f"{top}/{day.name}/{f.name}", f.stat().st_mtime))
+            try:
+                out += self.backend.list(top)
+            except BlobError as exc:
+                raise ImageStoreError(f"could not list evidence: {exc}") from exc
         return out
 
     def delete_any(self, relative: str) -> None:
-        """Delete a listed file even if it is a stray ``.part`` (path still confined)."""
-        path = (self.root / relative).resolve()
-        if self.root in path.parents:
-            path.unlink(missing_ok=True)
+        """Delete a listed object even if it is a stray ``.part`` (still confined by the backend)."""
+        with contextlib.suppress(BlobError):
+            self.backend.delete(relative)
 
     @staticmethod
     def age_seconds(mtime: float) -> float:

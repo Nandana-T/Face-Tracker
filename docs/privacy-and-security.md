@@ -33,6 +33,9 @@ Section *Biometric data (Phase 3)* below is the authoritative description of the
 * **What these events do not prove.** An exit is the last sighting, not proof of leaving the premises; a stream ending is not an exit; the number of visits is not a number of people (recognition errors, look-alikes and the quality gate make it unreliable without identity ground truth).
 * No new roles, no audit trail of who viewed an image, no encryption of evidence files at rest beyond the disk: the Phase 3 limitations still apply.
 
+## Storage backends (Phase 6)
+Biometric images live either on the API host's disk (`STORAGE_BACKEND=local`, development) or in ONE **private** Supabase Storage bucket (`supabase`; prefixes `faces/`, `evidence/`). The service-role key is a server secret held only by the API process - never by the worker, the frontend or the logs. Images are served only through authenticated endpoints; there are no public or signed URLs; erasure deletes the objects. Production with local storage logs a warning (ephemeral disk). Real-bucket behaviour is unverified until `scripts/verify_storage.py` is run ([ADR 0016](decisions/0016-private-object-storage.md)).
+
 ## Analytics (Phase 5)
 * Analytics read only counts and timestamps from existing tables; no response contains an embedding, an image path or a credential (asserted in tests). The analytics stream carries change notices only.
 * **Erasure and aggregates:** erasing a visitor removes the identity from registered/unique counts; their visits and events stay as de-identified rows and remain in visit/entry/terminal totals (`visits_without_identity` makes this visible). No biometric or identity data is retained to preserve dashboard numbers. There is **no claim of anonymisation** beyond this: the pseudonymous visitor id/label still appears in older `events.log` lines (Phase 4).

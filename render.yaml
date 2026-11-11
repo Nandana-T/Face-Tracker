@@ -22,4 +22,18 @@ services:
         value: "false"
       - key: WORKER_TOKEN
         sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: AUTH_SECRET
+        sync: false
+      # Durable biometric evidence: a PRIVATE Supabase Storage bucket (the service-role key is a
+      # server secret: it exists only on this service, never on the worker or in the frontend).
+      - key: STORAGE_BACKEND
+        value: supabase
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET
+        value: katomaran-evidence
     numInstances: 1

@@ -28,3 +28,5 @@ Phase 3 adds *recognition* and *persistent identity* only. There are still no vi
 Phase 4 adds *visits* and *entry/exit events* only. A visit is one presence episode of one recognised visitor; the count of visits or events is **not** a unique-visitor count, and no analytics exist (Phase 5 needs identity ground truth before it may claim accuracy).
 
 Phase 5 adds analytics over existing data (no migration). Unique visitors are registered *identities*; person-level accuracy is reported only for the LFW-labelled set and never claimed for the hackathon footage.
+
+Phase 6 (release preparation) adds private object storage, production-mode/remote-path and local-RTSP verification, deployment/security/submission documentation. Cloud provisioning, hosted migrations, the demo video, the push and the form submission are external steps that need the owner's approval and are **not done**.

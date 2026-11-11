@@ -9,13 +9,14 @@ interface so object storage can replace it later without touching the identity l
 from __future__ import annotations
 
 import hashlib
-import os
 import re
 import time
 from pathlib import Path
 
 import cv2
 import numpy as np
+
+from app.services.blob_store import BlobBackend, BlobError, LocalBlobBackend
 
 _ID = re.compile(r"^[0-9a-f]{32}$")
 _NAME = re.compile(r"^[0-9a-f]{32}/[0-9a-f]{20}\.jpg$")
@@ -40,82 +41,78 @@ def validate_jpeg(data: bytes) -> np.ndarray:
 
 
 class LocalImageStore:
-    def __init__(self, root: Path) -> None:
-        self.root = root.resolve()
-        self.root.mkdir(parents=True, exist_ok=True)
+    """Visitor representative images on a ``BlobBackend`` (local folder by default, or Supabase private
+    storage). The name is historical: pass a ``Path`` for the local filesystem or a ready backend."""
 
-    def _resolve(self, relative: str) -> Path:
+    def __init__(self, root: Path | None = None, backend: BlobBackend | None = None) -> None:
+        if backend is None:
+            if root is None:
+                raise ValueError("a root folder or a backend is required")
+            backend = LocalBlobBackend(root)
+        self.backend = backend
+
+    @property
+    def root(self) -> Path:
+        """The local folder (local backend only; remote storage has none)."""
+        root: Path | None = getattr(self.backend, "root", None)
+        if root is None:
+            raise RuntimeError("remote storage has no local root")
+        return root
+
+    @staticmethod
+    def _check(relative: str) -> None:
         if not _NAME.match(relative):
             raise ImageStoreError("invalid image reference")
-        path = (self.root / relative).resolve()
-        if self.root not in path.parents:
-            raise ImageStoreError("path escapes the image store")
-        return path
 
     def save(self, visitor_id: str, jpeg: bytes) -> tuple[str, str]:
-        """Validate and store; returns (relative path, sha256 of the bytes)."""
+        """Validate and store; returns (relative path, sha256 of the bytes). Idempotent."""
         if not _ID.match(visitor_id):
             raise ImageStoreError("invalid visitor id")
         validate_jpeg(jpeg)
         digest = hashlib.sha256(jpeg).hexdigest()
         relative = f"{visitor_id}/{digest[:20]}.jpg"
-        path = self._resolve(relative)
-        if path.is_file():
-            return relative, digest  # same crop: nothing to write
-        path.parent.mkdir(parents=True, exist_ok=True)
-        partial = path.with_suffix(".part")
         try:
-            with partial.open("wb") as handle:
-                handle.write(jpeg)
-                handle.flush()
-                os.fsync(handle.fileno())
-            partial.replace(path)
-        except OSError as exc:
-            partial.unlink(missing_ok=True)
+            self.backend.put(relative, jpeg)  # an existing object is left alone
+        except BlobError as exc:
             raise ImageStoreError(f"could not write the image: {exc}") from exc
         return relative, digest
 
     def read(self, relative: str) -> bytes:
-        path = self._resolve(relative)
+        self._check(relative)
         try:
-            return path.read_bytes()
-        except OSError as exc:
+            return self.backend.get(relative)
+        except BlobError as exc:
             raise ImageStoreError("image not found") from exc
 
     def exists(self, relative: str) -> bool:
         try:
-            return self._resolve(relative).is_file()
-        except ImageStoreError:
+            self._check(relative)
+            return self.backend.exists(relative)
+        except (ImageStoreError, BlobError):
             return False
 
     def delete_visitor(self, visitor_id: str) -> int:
-        """Remove every image of one visitor (erasure). Returns the number of files deleted."""
+        """Remove every image of one visitor (erasure). Returns the number of objects deleted."""
         if not _ID.match(visitor_id):
             raise ImageStoreError("invalid visitor id")
-        folder = (self.root / visitor_id).resolve()
-        if self.root not in folder.parents or not folder.is_dir():
-            return 0
-        n = 0
-        for f in folder.iterdir():
-            if f.is_file():
-                f.unlink(missing_ok=True)
-                n += 1
-        folder.rmdir()
-        return n
+        try:
+            return self.backend.delete_prefix(f"{visitor_id}/")
+        except BlobError as exc:
+            raise ImageStoreError(f"could not erase the images: {exc}") from exc
 
     def delete(self, relative: str) -> None:
-        self._resolve(relative).unlink(missing_ok=True)
+        self._check(relative)
+        try:
+            self.backend.delete(relative)
+        except BlobError as exc:
+            raise ImageStoreError(f"could not delete the image: {exc}") from exc
 
     def all_files(self) -> list[tuple[str, float]]:
         """(relative path, mtime) of every stored image (for reconciliation)."""
-        out: list[tuple[str, float]] = []
-        for folder in self.root.iterdir():
-            if folder.is_dir() and _ID.match(folder.name):
-                for f in folder.iterdir():
-                    rel = f"{folder.name}/{f.name}"
-                    if f.is_file() and _NAME.match(rel):
-                        out.append((rel, f.stat().st_mtime))
-        return out
+        try:
+            return [(k, m) for k, m in self.backend.list("") if _NAME.match(k)]
+        except BlobError as exc:
+            raise ImageStoreError(f"could not list the images: {exc}") from exc
 
     @staticmethod
     def age_seconds(mtime: float) -> float:

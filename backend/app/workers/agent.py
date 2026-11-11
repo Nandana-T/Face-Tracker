@@ -372,7 +372,20 @@ class WorkerAgent:
         stats: dict[str, Any] = {}
         try:
             try:
-                source = self._source_builder(self.config, source_id)
+                source = self._source_builder(
+                    self.config,
+                    source_id,
+                    # RTSP reconnecting/connected must reach the API and the UI (found by the local RTSP test:
+                    # this callback was never wired, so a lost stream looked "connected" forever)
+                    on_state=lambda s: self._send(
+                        {
+                            "type": P.MSG_STATE,
+                            "session_id": active.session_id,
+                            "state": s,
+                            "detail": None,
+                        }
+                    ),
+                )
                 detector = self._detector_factory(self.settings, self.config)
             except SourceError as exc:
                 logger.warning("Source rejected: %s", exc.code)

@@ -1,0 +1,154 @@
+{
+  "consistent": true,
+  "errors": 0,
+  "warnings": 0,
+  "checks": [
+    {
+      "name": "registered_visitors",
+      "ok": true,
+      "expected": 1,
+      "actual": 1,
+      "detail": "COUNT(visitors) vs rows",
+      "severity": "info"
+    },
+    {
+      "name": "unique_visitors_global",
+      "ok": true,
+      "expected": 1,
+      "actual": 1,
+      "detail": "COUNT(DISTINCT visits.visitor_id) vs set of visit rows",
+      "severity": "info"
+    },
+    {
+      "name": "visits",
+      "ok": true,
+      "expected": 1,
+      "actual": 1,
+      "detail": "COUNT(visits) vs rows",
+      "severity": "info"
+    },
+    {
+      "name": "visits_without_identity",
+      "ok": true,
+      "expected": 0,
+      "actual": 0,
+      "detail": "",
+      "severity": "info"
+    },
+    {
+      "name": "entry_events",
+      "ok": true,
+      "expected": 1,
+      "actual": 1,
+      "detail": "entry events vs SQL",
+      "severity": "info"
+    },
+    {
+      "name": "terminal_events",
+      "ok": true,
+      "expected": 1,
+      "actual": 1,
+      "detail": "terminal events vs SQL",
+      "severity": "info"
+    },
+    {
+      "name": "every_visit_has_one_entry_and_the_right_terminal_events",
+      "ok": true,
+      "expected": 0,
+      "actual": 0,
+      "detail": "",
+      "severity": "info"
+    },
+    {
+      "name": "events_without_visit",
+      "ok": true,
+      "expected": 0,
+      "actual": 0,
+      "detail": "",
+      "severity": "info"
+    },
+    {
+      "name": "visits_with_unknown_visitor",
+      "ok": true,
+      "expected": 0,
+      "actual": 0,
+      "detail": "foreign key integrity",
+      "severity": "info"
+    },
+    {
+      "name": "duplicate_idempotency_keys",
+      "ok": true,
+      "expected": 0,
+      "actual": 0,
+      "detail": "",
+      "severity": "info"
+    },
+    {
+      "name": "terminal_event_type_matches_closure_basis",
+      "ok": true,
+      "expected": 0,
+      "actual": 0,
+      "detail": "",
+      "severity": "info"
+    },
+    {
+      "name": "exit_time_set_exactly_for_final_visits",
+      "ok": true,
+      "expected": 0,
+      "actual": 0,
+      "detail": "",
+      "severity": "info"
+    },
+    {
+      "name": "erased_events_keep_no_evidence_reference",
+      "ok": true,
+      "expected": 0,
+      "actual": 0,
+      "detail": "events of erased visitors must not claim a stored image",
+      "severity": "info"
+    },
+    {
+      "name": "stale_open_visits_reported_not_counted_as_active",
+      "ok": true,
+      "expected": 0,
+      "actual": 0,
+      "detail": "open visits of sessions that are not live (run event reconciliation)",
+      "severity": "info"
+    },
+    {
+      "name": "active_visits",
+      "ok": true,
+      "expected": 0,
+      "actual": 0,
+      "detail": "",
+      "severity": "info"
+    },
+    {
+      "name": "live_sessions_are_active_in_the_database",
+      "ok": true,
+      "expected": 0,
+      "actual": 0,
+      "detail": "",
+      "severity": "info"
+    },
+    {
+      "name": "events_log_deliveries_pending",
+      "ok": true,
+      "expected": 0,
+      "actual": 0,
+      "detail": "outbox rows not yet DELIVERED (see /events/health)",
+      "severity": "info"
+    },
+    {
+      "name": "visitors_without_embeddings",
+      "ok": true,
+      "expected": 0,
+      "actual": 0,
+      "detail": "identity without any template",
+      "severity": "info"
+    }
+  ],
+  "mode": "report-only: no data was modified",
+  "duration_ms": 43.6,
+  "generated_at": "2026-11-11T06:15:24+00:00"
+}

@@ -8,6 +8,7 @@ Credentials: the URL is held privately and only ever logged in redacted form.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import threading
@@ -72,10 +73,16 @@ class RtspVideoSource:
         sleep: Callable[[float], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
         on_state: Callable[[str], None] | None = None,
+        stall_grace_s: float = 2.0,
     ) -> None:
         self._url = url
         self._connect_timeout = connect_timeout_s
         self._read_timeout = read_timeout_s
+        # A read still blocked this long after its own timeout is a STALLED stream (found by the
+        # local RTSP test: OpenCV's read timeout does not always fire over TCP when the server stays
+        # connected but sends nothing) - the capture is abandoned and the source reconnects.
+        self._stall_after = read_timeout_s + stall_grace_s
+        self.stalls = 0
         self._interval = reconnect_interval_s
         self._max_backoff = max_backoff_s
         self._max_attempts = max_reconnect_attempts
@@ -147,6 +154,38 @@ class RtspVideoSource:
         return False
 
     # -- frames ---------------------------------------------------------------------
+    def _read(self, cap: Any) -> tuple[bool, Any]:
+        """``cap.read()`` bounded by the stall watchdog. A blocked capture cannot be interrupted, so
+        it is abandoned to a daemon thread that releases it once (if ever) the read returns."""
+        box: list[tuple[bool, Any]] = []
+        done = threading.Event()
+
+        def run() -> None:
+            try:
+                box.append(cap.read())
+            except Exception:  # noqa: BLE001 - a broken capture is a failed read
+                box.append((False, None))
+            finally:
+                done.set()
+
+        worker = threading.Thread(target=run, name="rtsp-read", daemon=True)
+        worker.start()
+        if done.wait(self._stall_after):
+            return box[0]
+        self.stalls += 1
+        logger.warning("RTSP stream stalled; reconnecting", extra={"url": self.url_for_log})
+
+        def release_later() -> None:
+            worker.join()
+            with contextlib.suppress(Exception):
+                cap.release()
+
+        with self._lock:
+            if self._cap is cap:
+                self._cap = None  # close() must not release a capture that is stuck in a read
+        threading.Thread(target=release_later, name="rtsp-release", daemon=True).start()
+        return False, None
+
     def frames(self) -> Iterator[Frame]:
         if self._cap is None:
             raise SourceOpenError("The source is not open.", "source_not_open")
@@ -157,7 +196,7 @@ class RtspVideoSource:
                 cap = self._cap
             if cap is None:
                 return
-            ok, pixels = cap.read()
+            ok, pixels = self._read(cap)
             if ok and pixels is not None and getattr(pixels, "size", 0) > 0:
                 yield Frame(
                     index=index,

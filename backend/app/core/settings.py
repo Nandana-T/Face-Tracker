@@ -64,6 +64,15 @@ class Settings(BaseSettings):
     auth_secret: SecretStr | None = None
     auth_token_ttl_minutes: int = Field(default=480, ge=5, le=10_080)
 
+    # --- Biometric image storage -----------------------------------------------------
+    # "local": faces_dir / visits.evidence_dir on the API host (development; ephemeral on PaaS).
+    # "supabase": ONE PRIVATE Supabase Storage bucket (faces/, evidence/). The service-role key is
+    # a server secret kept only in the API process (never in the worker or the frontend).
+    storage_backend: Literal["local", "supabase"] = "local"
+    supabase_url: str | None = None
+    supabase_service_role_key: SecretStr | None = None
+    supabase_bucket: str = "katomaran-evidence"
+
     # --- Files / directories (relative paths resolve against the project root) ---
     config_file: Path = Path("config/config.json")
     log_dir: Path = Path("logs")
@@ -72,6 +81,18 @@ class Settings(BaseSettings):
     log_level: LogLevel | None = Field(
         default=None, description="Overrides logging.level from config.json when set."
     )
+
+    @model_validator(mode="after")
+    def _storage_requirements(self) -> Settings:
+        if self.storage_backend == "supabase":
+            missing = []
+            if not self.supabase_url or not self.supabase_url.startswith("https://"):
+                missing.append("SUPABASE_URL (https://...)")
+            if self.supabase_service_role_key is None:
+                missing.append("SUPABASE_SERVICE_ROLE_KEY")
+            if missing:
+                raise ValueError("STORAGE_BACKEND=supabase needs " + ", ".join(missing))
+        return self
 
     @model_validator(mode="after")
     def _production_requirements(self) -> Settings:

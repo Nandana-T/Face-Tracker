@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -187,6 +189,51 @@ def test_rtsp_reconnects_after_read_failure_with_backoff() -> None:
     assert fake.caps[0].released  # the dead connection was released
     src.close()
     assert fake.caps[-1].released
+
+
+class StallingCapture(ScriptedCapture):
+    """Delivers its frames, then blocks in read() like a connected-but-silent RTSP server."""
+
+    def __init__(self, frames: int) -> None:
+        super().__init__([True] * frames)
+        self.unblock = threading.Event()
+
+    def read(self) -> tuple[bool, Any]:
+        if self.script:
+            return super().read()
+        self.unblock.wait(5)
+        return False, None
+
+
+def test_rtsp_stalled_stream_is_detected_and_reconnected() -> None:
+    caps: list[ScriptedCapture] = []
+
+    def factory(url: str, connect_timeout: float, read_timeout: float) -> ScriptedCapture:
+        cap: ScriptedCapture = StallingCapture(2) if not caps else ScriptedCapture([True, True])
+        caps.append(cap)
+        return cap
+
+    states: list[str] = []
+    src = RtspVideoSource(
+        "rtsp://10.0.0.9/stream", capture_factory=factory, sleep=lambda _s: None, reconnect_interval_s=1,
+        read_timeout_s=0.05, stall_grace_s=0.1, on_state=states.append,
+    )  # fmt: skip
+    src.open()
+    got = []
+    for frame in src.frames():
+        got.append(frame.index)
+        if len(got) == 4:
+            break
+    assert got == [0, 1, 2, 3]  # the stall did not hang the source; indices continue
+    assert src.stalls == 1 and src.reconnects == 1 and states == ["reconnecting", "connected"]
+    stuck = caps[0]
+    assert isinstance(stuck, StallingCapture)
+    stuck.unblock.set()  # the blocked read finally returns -> the abandoned capture is released
+    deadline = time.time() + 2
+    while not stuck.released and time.time() < deadline:
+        time.sleep(0.01)
+    assert stuck.released
+    src.close()
 
 
 def test_rtsp_gives_up_after_max_attempts() -> None:

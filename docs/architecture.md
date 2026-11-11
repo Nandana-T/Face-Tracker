@@ -150,6 +150,9 @@ browser: TanStack Query invalidation + refetch (+ refetch on reconnect, 20 s pol
 ```
 No analytics store, no cache, no second counter: every number is re-read from PostgreSQL. Definitions (identities vs people, returning, active vs stale, erasure) are in [phase-5-report.md](phase-5-report.md) and [ADR 0015](decisions/0015-counting-semantics.md). The independent recount (`reconcile`) is report-only.
 
+## Storage and deployment (Phase 6)
+Image I/O goes through `BlobBackend` (`LocalBlobBackend`, `SupabaseBlobBackend`) beneath `LocalImageStore`/`EvidenceStore`; see [ADR 0016](decisions/0016-private-object-storage.md). Target topology (Vercel + Render + Supabase + local worker), limits and recovery: [deployment-guide.md](deployment-guide.md).
+
 ## Measured resource usage
 See [`benchmarks/phase1-benchmark.md`](benchmarks/phase1-benchmark.md): one real-time stream at the shipped defaults uses
 ≈ 7 % of an i5-1240P and ≈ 230 MB RSS; ≈ 31 ms inference per frame. GPU: not measured (no usable GPU). Tracking cost (measured in Phase 2): [`benchmarks/phase2-tracking.md`](benchmarks/phase2-tracking.md). Phase 3 embedding cost
