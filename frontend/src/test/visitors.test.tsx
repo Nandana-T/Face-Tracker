@@ -160,7 +160,8 @@ describe("visitor details", () => {
     expect(items[0]).toHaveTextContent("Track #7 (session-only) · registered here");
     expect(items[1]).toHaveTextContent("similarity 0.83");
     expect(items[1]).toHaveTextContent("1 conflicting observation");
-    expect(within(drawer).getByText(/not a visit log/)).toBeInTheDocument();
+    // entry/exit events live in their own page; the drawer only points there (no counts here)
+    expect(within(drawer).getByTestId("drawer-events-link")).toHaveAttribute("href", "/events?visitor=V00002");
     expect(router.state.location.search).toContain("visitor=");
     expect(drawer.textContent).not.toMatch(/embedding vector|unique visitors/i);
     // closing returns to the gallery

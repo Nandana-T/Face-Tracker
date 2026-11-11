@@ -33,8 +33,12 @@ _RESERVED = set(logging.makeLogRecord({}).__dict__) | {
 
 class CorrelationFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        record.request_id = request_id_var.get()
-        record.session_id = session_id_var.get()
+        # An explicit value (``extra={"session_id": ...}``, e.g. an audit record about another
+        # session than the current request) wins over the ambient context.
+        if getattr(record, "request_id", None) is None:
+            record.request_id = request_id_var.get()
+        if getattr(record, "session_id", None) is None:
+            record.session_id = session_id_var.get()
         record.component = record.name
         return True
 
@@ -77,11 +81,20 @@ class ConsoleFormatter(logging.Formatter):
         return super().format(record)
 
 
-def _file_handler(path: Path) -> logging.Handler:
+class StrictFileHandler(logging.handlers.RotatingFileHandler):
+    """Rotating file handler that COUNTS write failures (the stdlib swallows them), so the events.log
+    writer can tell a delivered record from a lost one."""
+
+    failures = 0
+
+    def handleError(self, record: logging.LogRecord) -> None:
+        self.failures += 1
+
+
+def _file_handler(path: Path, strict: bool = False) -> logging.Handler:
     path.parent.mkdir(parents=True, exist_ok=True)
-    handler = logging.handlers.RotatingFileHandler(
-        path, maxBytes=10_000_000, backupCount=5, encoding="utf-8"
-    )
+    cls = StrictFileHandler if strict else logging.handlers.RotatingFileHandler
+    handler = cls(path, maxBytes=10_000_000, backupCount=5, encoding="utf-8")
     handler.setFormatter(JsonFormatter())
     handler.addFilter(CorrelationFilter())
     return handler
@@ -122,7 +135,7 @@ def setup_logging(level: str, log_dir: Path, events_file: Path) -> None:
     events_file.touch(exist_ok=True)
     events.setLevel(logging.INFO)
     events.propagate = False  # event records go to events.log + console, not app.log
-    events.addHandler(_mark(_file_handler(events_file)))
+    events.addHandler(_mark(_file_handler(events_file, strict=True)))
     events.addHandler(_mark(_console_handler()))
 
     # Uvicorn's access log is replaced by RequestIdMiddleware's request log (with request IDs).

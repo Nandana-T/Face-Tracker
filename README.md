@@ -2,9 +2,9 @@
 
 Detects, recognises, registers, tracks and counts unique visitors from video files and RTSP streams, with a real-time dashboard.
 
-> **Current state: Phase 3 (recognition, automatic registration, visitor gallery) on top of Phases 0-2, awaiting approval.** Everything marked ✅ exists and is tested.
-> The app detects faces, tracks them (temporary `#id` per session) and **recognises/registers persistent visitors** (`V00124`) from face embeddings. There are **no visits, entry/exit events or unique-visitor
-> counts yet** (Phase 4+), and the UI never shows an invented number. A track id is not a visitor id. Details and honest limitations: [docs/phase-3-report.md](docs/phase-3-report.md),
+> **Current state: Phase 4 (visit lifecycle, entry/exit events, durable persistence) on top of Phases 0-3, awaiting approval.** Everything marked ✅ exists and is tested.
+> The app detects faces, tracks them (temporary `#id` per session), **recognises/registers persistent visitors** (`V00124`) and records **visits**: one confirmed presence episode has one *entry* and one *exit*
+> event in PostgreSQL, as a face crop and in `events.log`. A track id is not a visitor id and neither is a visit id. **There are still no unique-visitor counts or analytics** (Phase 5): the number of visits or events is never a number of people, and the UI never shows an invented number. Details and honest limitations: [docs/phase-4-report.md](docs/phase-4-report.md), [docs/phase-3-report.md](docs/phase-3-report.md),
 > [docs/phase-2-report.md](docs/phase-2-report.md), [docs/phase-1-5-report.md](docs/phase-1-5-report.md), [docs/phase-1-report.md](docs/phase-1-report.md).
 > **Biometric data:** recognition stores face embeddings and face images - read [docs/privacy-and-security.md](docs/privacy-and-security.md) and the model-licence notes ([ADR 0013](docs/decisions/0013-recognition-model-and-licensing.md): hackathon/non-commercial scope) before using it on real people.
 
@@ -20,8 +20,8 @@ Detects, recognises, registers, tracks and counts unique visitors from video fil
 | Validation on the hackathon footage (23 videos) | ✅ [docs/real-video-validation.md](docs/real-video-validation.md) |
 | Measured CPU benchmark | ✅ [docs/benchmarks/phase1-benchmark.md](docs/benchmarks/phase1-benchmark.md) (GPU: not measured – no usable GPU) |
 | Face embeddings (SFace, ONNX Runtime), landmark alignment, quality gate, automatic registration, re-identification across sessions/restarts, visitor gallery + details, live recognition labels + notifications | ✅ Phase 3 ([report](docs/phase-3-report.md), [benchmark](docs/benchmarks/phase3-recognition.md)) |
-| Visit lifecycle, entry/exit events, `events.log` events | Phase 4 |
-| Analytics, real-time updates, RTSP hardening, per-user auth, deployment | Phases 5–7 (`docs/phase-roadmap.md`) |
+| Visit lifecycle (grace period, reacquisition, EOF/interruption rules), idempotent entry/exit events in PostgreSQL + evidence crops + mandatory `events.log` with outbox, crash reconciliation, Event Logs page, visit details, live entry/exit notifications | ✅ Phase 4 ([report](docs/phase-4-report.md), [ADR 0014](docs/decisions/0014-visit-lifecycle-and-event-delivery.md), [benchmark](docs/benchmarks/phase4-visits.md)) |
+| Analytics, unique-visitor counts, real-time updates, RTSP hardening, per-user auth, deployment | Phases 5–7 (`docs/phase-roadmap.md`) |
 
 ## Architecture
 React SPA ⇄ FastAPI (`/api/v1`) ⇄ PostgreSQL, plus an independent **video worker** process that dials the API over a WebSocket
@@ -57,7 +57,7 @@ RTSP cameras: put the URL in an environment variable (e.g. `RTSP_FRONT_DOOR=rtsp
 ## Database
 * **Hosted (Supabase):** use the **Session pooler** connection string (the direct host is IPv6-only):
   `DATABASE_URL=postgresql://postgres.<ref>:<url-encoded-password>@<region>.pooler.supabase.com:5432/postgres?sslmode=require` and keep `DB_USE_PGBOUNCER=false` (session mode).
-  The credential was rotated and **migration `0002` is applied and verified** (revision `0002`, tables present, RLS on, TLS in use). Phase 2 needs no migration. **Phase 3 adds migration `0003`** (visitors, face_embeddings, identity_associations): verified on the local PostgreSQL; its status on Supabase is stated in [docs/phase-3-report.md](docs/phase-3-report.md) - apply it deliberately with `scripts\migrate-cloud.ps1`.
+  The credential was rotated and **migration `0002` is applied and verified** (revision `0002`, tables present, RLS on, TLS in use). Phase 2 needs no migration. **Phase 3 adds migration `0003`** (visitors, face_embeddings, identity_associations) and **Phase 4 adds `0004`** (visits, visit_events, event_delivery_outbox): both verified on the local PostgreSQL only. **The hosted Supabase database is still at `0002` - nothing was written to it.** Apply them deliberately, in order, with `scripts\migrate-cloud.ps1` after reading the preflight report in [docs/phase-4-report.md](docs/phase-4-report.md).
   Procedure and the credential check: [docs/security-runbook.md](docs/security-runbook.md), `.\scripts\migrate-cloud.ps1` (idempotent; refuses to run with the old exposed password).
 * **Local (no Docker, no credentials):** `. .\scripts\local-db.ps1 start` starts an embedded PostgreSQL in `storage\pgdata` and sets `DATABASE_URL`/`TEST_DATABASE_URL` for the shell; then `.\scripts\migrate.ps1`.
   Alternatively `docker compose up -d db`.
@@ -78,7 +78,7 @@ disables Start. Leaving the page does not stop a session; Stop does.
 .\scripts\check.ps1 -SkipE2E
 .\scripts\test-backend.ps1 [-Unit]    .\scripts\test-frontend.ps1 [-E2E]
 ```
-Last full run (this machine, 2026-11-11): backend **389 passed** · frontend **184 passed** · Playwright **25 passed** (authenticated real stack, incl. an application restart) · **598 total** (Phase 2 baseline 453) ·
+Last full run (this machine, 2026-11-11): backend **499 passed** · frontend **219 passed** · Playwright **28 passed** (authenticated real stack with the real models, incl. application restarts and a crash-recovery test) · **746 total** (Phase 3 baseline 598) ·
 ruff, mypy (strict), ESLint, `tsc`, production build clean. Breakdown and what the tests do *not* prove: [docs/testing-strategy.md](docs/testing-strategy.md).
 Benchmark: `.venv\Scripts\python.exe backend\benchmarks\benchmark_detector.py` then `render_report.py`.
 
@@ -130,7 +130,16 @@ preliminary calibration ([benchmark](docs/benchmarks/phase2-tracking.md)). `dete
 | `recognition.register_min_observations` / `register_min_seconds` / `register_min_quality` / `register_self_consistency` | 3 / 0.8 / 0.35 / 0.6 | automatic registration needs 3 consecutive novel observations over ≥ 0.8 s, mean quality ≥ 0.35, mutually consistent (mean pairwise cosine ≥ 0.6) |
 | `recognition.max_embeddings_per_visitor` / `index_sync_seconds` | 5 / 30 | embeddings stored per visitor; how often the in-memory index re-syncs from PostgreSQL |
 | `recognition.faces_dir` / `retention_days` / `model_path` | `storage/faces` / 0 / null | image store (on D:; never served statically), days without a sighting after which visitors are purged (0 = keep until erased), optional model override |
-| `logging` | … | logging (`LOG_LEVEL` env overrides level) |
+| `visits.enabled` | true | visit lifecycle and entry/exit events (needs recognition: a visit belongs to a recognised/registered visitor) |
+| `visits.missing_after_seconds` / `exit_after_seconds` | 1.5 / 8 | **video-time** with no sighting of the visitor on any track: after the first the visit is *temporarily missing* (nothing logged), after the second the visit closes and ONE exit is recorded at the last sighting. A visitor who reappears earlier (any track) keeps the visit |
+| `visits.max_frame_gap_seconds` | 2 | a gap between two processed frames longer than this (stall, RTSP outage) is blind time, never absence |
+| `visits.evidence_dir` / `min_crop_quality` | `logs` / 0.3 | entry/exit face crops go to `<dir>/entries/YYYY-MM-DD/` and `<dir>/exits/YYYY-MM-DD/` (D:, never served statically) |
+| `visits.queue_size` / `max_attempts` / `retry_base_seconds` / `retry_max_seconds` / `drain_timeout_seconds` / `orphan_grace_seconds` | 1000 / 8 / 0.5 / 15 / 10 / 300 | persistence queue, retry/back-off of failed writes, how long a session end waits for its events, age before an unreferenced evidence file is deleted |
+| `logging` | … | logging (`LOG_LEVEL` env overrides level); `events_file` is the mandatory `events.log` |
+
+## Events and consistency tools
+* `events.log` (JSON lines, `logging.events_file`) holds the pipeline narrative (track created/recovered, face detected, embedding generated, recognition, registration, source reconnects) and the durable `visit.entry` / `visit.exit` / `visit.interrupted` records (event id, visit id, visitor id, time, session/source, image reference, persistence outcome, `delivery_attempt`). PostgreSQL is the source of truth; the file is an auditable delivery artifact.
+* `python scripts\verify_events_log.py [--repair]` compares the file with the database (missing lines, unexplained duplicates, events unknown to the database; a redelivery after a crash is *explained* by its higher `delivery_attempt`). `--repair` first runs reconciliation. The same report is available at `GET /api/v1/events/log-verification`, health at `GET /api/v1/events/health`.
 
 ## Troubleshooting
 * **Start is disabled / "Video worker not connected"** – start the worker (`scripts\start-worker.ps1` or `start-all.ps1`); `WORKER_TOKEN` must match on both sides.
@@ -141,6 +150,8 @@ preliminary calibration ([benchmark](docs/benchmarks/phase2-tracking.md)). `dete
 * **Playwright can't find a browser** – set `PW_CHANNEL=msedge` (or `chrome`) or install Chromium. E2E needs ports 8000 and 5173 free.
 * **Orphaned processes after a crashed run** – `python scripts\stop_stack.py <pid>` kills a stack and all its descendants; `python scripts\stop_stack.py --sweep` kills any API/worker of this repository's backend.
 * **"Face recognition model missing" / recognition panel says unavailable** – run `scripts\download-model.ps1 -Recognition` on the worker machine and restart the worker; recognition also needs `tracking.enabled`.
+* **No entry/exit events appear** - visits exist only for recognised/registered visitors; if the Recognition panel says *Low quality* / *Undecided* for every face (quality gate), there will be no visits. This is by design (the gate is not lowered to produce events).
+* **An exit shows "Observation ended"** - the video ended or monitoring stopped while the visitor was still in view; it does not mean they left. **"Interrupted"** means the worker/API/source failed; no duration is shown because the end is unknown.
 * **No visitors are registered from my video** – by design most faces fail the quality gate (blur, profile, small, masks); the Recognition panel shows *Low quality* / *Undecided*. See `docs/benchmarks/phase3-recognition.md`.
 
 This project is a part of a hackathon run by https://katomaran.com

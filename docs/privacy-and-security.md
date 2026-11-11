@@ -1,4 +1,4 @@
-# Privacy and security (updated for Phase 3)
+# Privacy and security (updated for Phase 4)
 
 Faces are **biometric data**. Phases 1-2 only detected and tracked faces (nothing identifying was stored). **From Phase 3 the system creates and stores biometric templates**
 (face embeddings) and representative face images of people it registers automatically. This document records what is stored, what is exposed, who may see it, and what is still missing.
@@ -21,6 +21,17 @@ Section *Biometric data (Phase 3)* below is the authoritative description of the
 * **Limits of face recognition:** false matches and false non-matches happen. The thresholds are conservative and an uncertain face stays *undecided* instead of being forced into an identity, but a wrong merge or a duplicate is possible
   (measured rates: docs/phase-3-report.md). Do not use these identities for decisions about people without human review. Performance may differ across demographic groups and image conditions; no per-group evaluation was performed.
 * **Logs:** identity logging contains visitor numbers, track ids and states - never vectors or images. `events.log` entries `identity.registered|recognized|ambiguous|failed` carry session id, track id and visitor number.
+
+## Visit evidence (Phase 4)
+| Data | Where | Who can read it | Retention / deletion |
+|---|---|---|---|
+| Entry / exit **face crops** (≤ 192 px) | `visits.evidence_dir` (default `logs/`, on D:): `entries/YYYY-MM-DD/<event_id>.jpg`, `exits/...` | Authenticated `GET /events/{id}/image` only (`private, no-store`); no static route; names are validated hex ids and confined to the root | Deleted when the visitor is erased; orphans (no database row) removed by reconciliation after a grace period |
+| `visits`, `visit_events`, outbox (PostgreSQL, RLS enabled) | database | Authenticated events/visits API (no paths, no embeddings) | **Kept** when the visitor is erased, but de-identified: `visitor_id`/`visitor_number` set to NULL, evidence deleted (`image_status = ERASED`). They hold times, source, outcome only |
+| `events.log` lines | `logging.events_file` (rotating, 10 MB × 5) | Operators with file access | Append-only: lines written before an erasure keep the pseudonymous visitor id/label (no image, no embedding). An erasure writes a `visitor.erased` line. Delete/rotate the file per your retention policy |
+* A crop is evidence only if it passed the recognition quality gate, is a valid non-blank image and is attributed to the visitor's own track; a track whose identity changed loses its earlier crops. A black frame, an empty crop or an unusable image is **never stored** - the event says `UNAVAILABLE`.
+* **Exit images are not new captures.** They are the visitor's last good observation, or - when none exists - the entry image labelled `entry_representative`. The UI states which one it is.
+* **What these events do not prove.** An exit is the last sighting, not proof of leaving the premises; a stream ending is not an exit; the number of visits is not a number of people (recognition errors, look-alikes and the quality gate make it unreliable without identity ground truth).
+* No new roles, no audit trail of who viewed an image, no encryption of evidence files at rest beyond the disk: the Phase 3 limitations still apply.
 
 ## Data handling
 | Data | Where it lives | Retention |

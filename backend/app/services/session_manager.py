@@ -19,12 +19,14 @@ import contextlib
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from pydantic import ValidationError
 
 from app.core.config import AppConfig
 from app.core.errors import AppError
+from app.core.events import audit
 from app.models.processing_session import ProcessingSession
 from app.schemas.processing import (
     SessionError,
@@ -36,12 +38,14 @@ from app.schemas.processing import (
     WorkerOut,
 )
 from app.schemas.tracking import TrackingFrameMeta
-from app.services.identity_manager import IdentityManager, parse_observation
+from app.services.identity_manager import IdentityManager, parse_observation, visitor_label
 from app.services.session_store import (
     ActiveSessionExists,
     InvalidTransition,
     SessionStore,
 )
+from app.services.visit_manager import TrackSnap
+from app.services.visit_service import VisitService
 from app.vision.sources.registry import SourceDescriptor, get_descriptor, list_sources
 from app.workers import protocol as P
 
@@ -126,6 +130,9 @@ class LiveSession:
     created_monotonic: float = field(default_factory=time.monotonic)
     finishing: bool = False  # set once the session is being closed: late observations are ignored
     watchdogs: list[asyncio.Task[None]] = field(default_factory=list)
+    track_states: dict[int, str] = field(default_factory=dict)  # for track audit records
+    embedded_tracks: set[int] = field(default_factory=set)
+    last_video_ms: int = 0
 
 
 class SessionManager:
@@ -139,8 +146,19 @@ class SessionManager:
         self.live: LiveSession | None = None
         # Phase 3: set by the application factory when recognition is enabled.
         self.identity: IdentityManager | None = None
+        # Phase 4: set by the application factory when the visit lifecycle is enabled.
+        self.visits: VisitService | None = None
         self._lock = asyncio.Lock()
         self._background: set[asyncio.Task[Any]] = set()
+
+    def attach_visits(self, service: VisitService) -> None:
+        self.visits = service
+        service.notify = self._notify_visit
+
+    def _notify_visit(self, session_id: str, message: dict[str, Any]) -> None:
+        live = self.live
+        if live is not None and live.id == session_id:
+            self._broadcast_text(live, message)
 
     async def run_shielded(self, coro: Any) -> None:
         """Run cleanup that must complete even if the calling task is being cancelled.
@@ -304,6 +322,8 @@ class SessionManager:
                 ) from exc
             live = LiveSession(id=row.id, row=row)
             self.live = live
+            if self.visits is not None:
+                self.visits.manager.begin_session(row.id, desc.id, desc.label)
             try:
                 await worker.send(
                     {"type": P.MSG_START, "session_id": row.id, "source_id": source_id}
@@ -440,6 +460,9 @@ class SessionManager:
                 await self._on_running(live)
             elif state in ("reconnecting", "connected"):
                 live.connection = state
+                if self.visits is not None:
+                    self.visits.manager.on_connection(live.id, state)
+                audit(f"source.{state}", session_id=live.id)
                 await self._broadcast_state(live)
         elif kind == P.MSG_STATS:
             stats = message.get("stats")
@@ -480,6 +503,8 @@ class SessionManager:
                     "Dropping frame: invalid tracking metadata (%d errors)", exc.error_count()
                 )
                 return
+        if "tracks" in header and not live.finishing:
+            self._visit_frame(live, header)
         for sub in list(live.subscribers):
             sub.push_frame(data)
 
@@ -493,6 +518,18 @@ class SessionManager:
         except ValueError as exc:
             logger.warning("Dropping invalid observation: %s", exc)
             return
+        visits = self.visits
+        if visits is not None and obs.embedding is not None:
+            # Only observations that passed the recognition quality gate can become evidence.
+            visits.manager.on_observation(
+                live.id, obs.track_id, obs.crop_jpeg, obs.quality, obs.timestamp_ms
+            )
+            if obs.track_id not in live.embedded_tracks:
+                live.embedded_tracks.add(obs.track_id)
+                audit(
+                    "embedding.generated", session_id=live.id, track_id=obs.track_id,
+                    model_version=obs.model_version, quality=round(obs.quality, 3),
+                )  # fmt: skip
         try:
             events = await asyncio.to_thread(identity.observe, obs)
         except Exception:
@@ -508,6 +545,92 @@ class SessionManager:
                     visitor_number=event.visitor_number,
                     reason=event.reason,
                 )
+                audit(
+                    "visitor.registered" if event.kind == "registered" else f"recognition.{event.kind}",
+                    session_id=live.id, track_id=event.track_id, visitor_id=event.visitor_id,
+                    visitor_label=None if event.visitor_number is None else visitor_label(event.visitor_number),
+                    similarity=event.similarity, reason=event.reason,
+                )  # fmt: skip
+            if visits is not None:
+                self._visit_identity(live, event, obs.timestamp_ms)
+
+    # ------------------------------------------------------------------ visit lifecycle (Phase 4)
+    def _visit_frame(self, live: LiveSession, header: dict[str, Any]) -> None:
+        visits = self.visits
+        if visits is None:
+            return
+        try:
+            video_ms = int(header["timestamp_ms"])
+            frame_id = int(header["frame_id"])
+            raw_tracks = header.get("tracks") or []
+            snaps = [
+                TrackSnap(
+                    int(t["track_id"]),
+                    str(t["state"]),
+                    bool(t["observed"]),
+                    int(t["first_seen_ms"]),
+                )
+                for t in raw_tracks
+            ]
+        except (KeyError, TypeError, ValueError):
+            logger.warning("Frame without usable timing for the visit lifecycle")
+            return
+        if video_ms < 0 or frame_id < 0:
+            return
+        live.last_video_ms = max(live.last_video_ms, video_ms)
+        for t in snaps:  # low-rate audit trail of track creation / recovery
+            previous = live.track_states.get(t.track_id)
+            if previous is None:
+                audit("track.created", session_id=live.id, track_id=t.track_id)
+            if t.state == "CONFIRMED" and previous in (None, "TENTATIVE"):
+                audit("face.detected", session_id=live.id, track_id=t.track_id)
+            elif t.state == "CONFIRMED" and previous == "LOST":
+                audit("track.recovered", session_id=live.id, track_id=t.track_id)
+            live.track_states[t.track_id] = t.state
+        visits.submit(
+            visits.manager.on_frame(live.id, frame_id, video_ms, datetime.now(UTC), snaps)
+        )
+
+    def _visit_identity(self, live: LiveSession, event: Any, video_ms: int) -> None:
+        visits = self.visits
+        if visits is None:
+            return
+        if event.visitor_id is not None:
+            visitor, number = event.visitor_id, event.visitor_number
+        elif event.state in ("AMBIGUOUS", "REJECTED"):
+            visitor, number = None, None
+        else:
+            return
+        visits.submit(
+            visits.manager.on_identity(
+                live.id,
+                event.track_id,
+                visitor,
+                number,
+                max(video_ms, live.last_video_ms),
+                datetime.now(UTC),
+            )
+        )
+
+    def visits_snapshot(self, session_id: str) -> list[dict[str, Any]]:
+        return self.visits.snapshot(session_id) if self.visits is not None else []
+
+    @staticmethod
+    def _closure_reason(state: str, stop_reason: str | None, error_code: str | None) -> str:
+        """How the end of a session maps onto its open visits (see docs/phase-4-report.md)."""
+        if state == "COMPLETED":
+            return "end_of_stream"
+        if state == "STOPPED":
+            return (
+                "manual_stop"
+                if stop_reason in (None, "user_requested", "stopped")
+                else "worker_lost"
+            )
+        if error_code == "api_shutdown":
+            return "api_shutdown"
+        if error_code in ("worker_lost", "worker_replaced", "worker_lost_session", "orphaned"):
+            return "worker_lost"
+        return "source_error"
 
     def identity_snapshot(self, session_id: str) -> list[dict[str, Any]]:
         if self.identity is None:
@@ -556,6 +679,13 @@ class SessionManager:
         if self.live is not live:
             return
         live.finishing = True
+        if self.visits is not None:
+            # Open visits end here, by an explicit rule (EOF / manual stop => observation ended;
+            # crash / shutdown / source failure => interrupted). The events are persisted BEFORE the
+            # session is marked finished, so anybody who sees the final state also sees them.
+            reason = self._closure_reason(state, stop_reason, error_code)
+            self.visits.submit(self.visits.manager.end_session(live.id, reason, datetime.now(UTC)))
+            await self.visits.drain(self._config.visits.drain_timeout_seconds)
         if self.identity is not None:
             # Identity associations are persisted BEFORE the session is marked finished, so anybody
             # who sees COMPLETED/STOPPED/ERROR also sees what recognition concluded.

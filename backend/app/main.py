@@ -24,10 +24,13 @@ from app.core.middleware import RequestIdMiddleware
 from app.core.security import AuthService
 from app.core.settings import Settings, get_settings
 from app.db.session import create_db_engine, create_session_factory
+from app.services.event_recorder import EventRecorder
+from app.services.evidence_store import EvidenceStore
 from app.services.identity_manager import IdentityManager
 from app.services.image_store import LocalImageStore
 from app.services.session_manager import SessionManager
 from app.services.session_store import SessionStore
+from app.services.visit_service import VisitService
 
 logger = logging.getLogger("katomaran.app")
 
@@ -62,11 +65,19 @@ def create_app(
                 logger.info("Identity index loaded", extra={"embeddings": n})
             except Exception as exc:  # database may be down at boot; recognition retries lazily
                 logger.warning("Could not load the identity index: %s", type(exc).__name__)
+        visits: VisitService | None = app.state.visits
         try:
             await sessions.reconcile_orphans()
+            if visits is not None:
+                # Visits left open by a crashed/stopped process are closed as INTERRUPTED, log lines and
+                # evidence interrupted mid-delivery are completed, orphaned files are removed.
+                report = await asyncio.to_thread(visits.recorder.reconcile, None, True)
+                logger.info("Event reconciliation", extra=report)
         except Exception as exc:  # database may be down at boot; the API must still start
             logger.warning("Could not reconcile orphaned sessions: %s", type(exc).__name__)
         monitor = asyncio.create_task(sessions.monitor_worker())
+        if visits is not None:
+            visits.start()
         yield
         logger.info("Shutting down katomaran-api")
         monitor.cancel()
@@ -76,6 +87,8 @@ def create_app(
             await sessions.shutdown()
         except Exception as exc:
             logger.warning("Session shutdown cleanup failed: %s", type(exc).__name__)
+        if visits is not None:
+            await visits.stop(config.visits.drain_timeout_seconds)
         if owns_engine:
             engine.dispose()
 
@@ -109,6 +122,14 @@ def create_app(
             SFACE.embedding_dim,
         )
         app.state.sessions.identity = app.state.identity
+
+    app.state.visits = None
+    if config.visits.enabled:
+        recorder = EventRecorder(
+            app.state.session_factory, EvidenceStore(config.evidence_path), config.visits
+        )
+        app.state.visits = VisitService(config.visits, recorder)
+        app.state.sessions.attach_visits(app.state.visits)
 
     register_exception_handlers(app)
     app.add_middleware(

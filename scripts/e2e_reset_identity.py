@@ -27,9 +27,14 @@ def main() -> int:
         return 2
     engine = create_db_engine(get_settings())
     with engine.begin() as conn:
-        conn.execute(text("TRUNCATE identity_associations, face_embeddings, visitors CASCADE"))
+        conn.execute(
+            text(
+                "TRUNCATE event_delivery_outbox, visit_events, visits, "
+                "identity_associations, face_embeddings, visitors CASCADE"
+            )
+        )
     engine.dispose()
-    print("identity tables emptied")
+    print("identity and visit tables emptied")
     return 0
 
 

@@ -53,6 +53,12 @@
     "lost_velocity_decay_per_second": 1.0,
     "max_tracks": 200
   },
+  "visits": {
+    "missing_after_seconds": 1.5,
+    "exit_after_seconds": 8,
+    "max_frame_gap_seconds": 2,
+    "evidence_dir": "logs"
+  },
   "logging": {
     "level": "INFO",
     "events_file": "logs/events.log"

@@ -19,6 +19,7 @@ import { ApiError } from "@/lib/api";
 import { DetectionSummary } from "./detection-summary";
 import { SourceControls } from "./source-controls";
 import { RecognitionPanel } from "./recognition-panel";
+import { VisitActivityPanel } from "./visit-activity-panel";
 import { TrackingPanel } from "./tracking-panel";
 import { describeView, sourceTypeLabel, type ViewKey } from "./status-copy";
 import { useMonitoring } from "./use-monitoring";
@@ -229,6 +230,11 @@ export function MonitoringPage() {
             registeredThisSession={m.registeredThisSession}
             recognisedTracks={m.recognisedTracks}
             unavailableReason={recognitionUnavailable}
+          />
+          <VisitActivityPanel
+            session={m.session}
+            activeVisits={m.activeVisits}
+            recentEvents={m.recentEvents}
           />
           <DetectionSummary session={m.session} latest={m.latest} streamFps={m.streamFps} />
         </div>

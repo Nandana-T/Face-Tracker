@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { toast } from "@/components/ui/toaster";
 import { ApiError, api, streamUrl } from "@/lib/api";
@@ -10,9 +10,14 @@ import {
   type SessionStats,
   type Track,
   type TrackIdentity,
+  type VisitEventMessage,
+  type VisitState,
+  type VisitStateMessage,
+  type VisitsSnapshotMessage,
 } from "@/lib/api-types";
 import { noticeFor, noticeKey } from "@/lib/identity";
 import { LiveStream, type LinkState } from "@/lib/live-stream";
+import { visitNotice } from "@/lib/visits";
 import type { OverlayOptions, VideoCanvasHandle } from "./video-canvas";
 
 const SOURCES_POLL_MS = 5000;
@@ -34,6 +39,17 @@ export interface SelectedTrack {
   /** The track is no longer in the latest frame (removed or the session ended). */
   ended: boolean;
 }
+
+/** A visit that is currently open in this session (from the server; never inferred from tracks). */
+export interface ActiveVisit {
+  visitId: string;
+  visitorLabel: string;
+  state: VisitState;
+}
+
+/** The most recent durable events of this session, newest first. */
+export type RecentVisitEvent = VisitEventMessage["event"];
+export const RECENT_EVENTS_LIMIT = 8;
 
 export function isActive(session: SessionOut | null): boolean {
   return session !== null && ACTIVE_STATES.includes(session.state);
@@ -66,6 +82,11 @@ export function useMonitoring(canvas: RefObject<VideoCanvasHandle | null>) {
   const noticed = useRef(new Set<string>());
   const [identities, setIdentities] = useState<ReadonlyMap<number, TrackIdentity>>(new Map());
   const [registeredThisSession, setRegisteredThisSession] = useState(0);
+  const queryClient = useQueryClient();
+  // Phase 4: durable visit events of THIS session. Notifications are deduplicated by event id.
+  const seenEvents = useRef(new Set<string>());
+  const [recentEvents, setRecentEvents] = useState<RecentVisitEvent[]>([]);
+  const [activeVisits, setActiveVisits] = useState<ReadonlyMap<string, ActiveVisit>>(new Map());
   const [recognisedTracks, setRecognisedTracks] = useState(0);
 
   const sources = useQuery({
@@ -82,6 +103,63 @@ export function useMonitoring(canvas: RefObject<VideoCanvasHandle | null>) {
 
   const applySession = useCallback((next: SessionOut) => {
     setSession((prev) => (prev && prev.id !== next.id && isActive(prev) ? prev : next));
+  }, []);
+
+  const resetVisits = useCallback(() => {
+    seenEvents.current = new Set();
+    setRecentEvents([]);
+    setActiveVisits(new Map());
+  }, []);
+
+  const applyVisitEvent = useCallback(
+    (id: string, message: VisitEventMessage) => {
+      const e = message.event;
+      if (e.session_id !== id) return; // never apply another session's events
+      if (seenEvents.current.has(e.id)) return; // a replay / duplicate message: no second notification
+      seenEvents.current.add(e.id);
+      setRecentEvents((prev) => [e, ...prev].slice(0, RECENT_EVENTS_LIMIT));
+      setActiveVisits((prev) => {
+        const next = new Map(prev);
+        if (e.type === "entry") {
+          next.set(e.visit_id, {
+            visitId: e.visit_id,
+            visitorLabel: e.visitor?.label ?? "Erased visitor",
+            state: "ACTIVE",
+          });
+        } else {
+          next.delete(e.visit_id);
+        }
+        return next;
+      });
+      const notice = visitNotice(message);
+      toast[notice.level === "info" ? "message" : notice.level](notice.title, {
+        description: notice.description,
+        id: `visit-event:${e.id}`,
+      });
+      void queryClient.invalidateQueries({ queryKey: ["events"] });
+      void queryClient.invalidateQueries({ queryKey: ["visit", e.visit_id] });
+    },
+    [queryClient],
+  );
+
+  const applyVisitState = useCallback((message: VisitStateMessage) => {
+    setActiveVisits((prev) => {
+      const current = prev.get(message.visit_id);
+      if (!current || current.state === message.state) return prev;
+      return new Map(prev).set(message.visit_id, { ...current, state: message.state });
+    });
+  }, []);
+
+  const applyVisitsSnapshot = useCallback((message: VisitsSnapshotMessage) => {
+    const next = new Map<string, ActiveVisit>();
+    for (const v of message.visits) {
+      next.set(v.visit_id, {
+        visitId: v.visit_id,
+        visitorLabel: `V${String(v.visitor_number).padStart(5, "0")}`,
+        state: v.state,
+      });
+    }
+    setActiveVisits(next);
   }, []);
 
   const resetIdentities = useCallback(() => {
@@ -120,6 +198,7 @@ export function useMonitoring(canvas: RefObject<VideoCanvasHandle | null>) {
     (id: string) => {
       detach();
       resetIdentities();
+      resetVisits();
       arrivals.current = [];
       const s = new LiveStream(
         {
@@ -128,6 +207,9 @@ export function useMonitoring(canvas: RefObject<VideoCanvasHandle | null>) {
         {
           onSession: applySession,
           onIdentity: (e, replay) => applyIdentity(id, e, replay),
+          onVisitEvent: (m) => applyVisitEvent(id, m),
+          onVisitState: applyVisitState,
+          onVisits: applyVisitsSnapshot,
           onStats: (stats: SessionStats) =>
             setSession((prev) => (prev && prev.id === id ? { ...prev, stats } : prev)),
           onFrame: (image, header) => {
@@ -142,7 +224,17 @@ export function useMonitoring(canvas: RefObject<VideoCanvasHandle | null>) {
       stream.current = s;
       s.connect();
     },
-    [applySession, detach, canvas, resetIdentities, applyIdentity],
+    [
+      applySession,
+      detach,
+      canvas,
+      resetIdentities,
+      resetVisits,
+      applyIdentity,
+      applyVisitEvent,
+      applyVisitState,
+      applyVisitsSnapshot,
+    ],
   );
 
   // Rehydrate after navigation/reload: processing continues server-side while the page is closed.
@@ -311,6 +403,8 @@ export function useMonitoring(canvas: RefObject<VideoCanvasHandle | null>) {
     active,
     tracks,
     identities,
+    recentEvents,
+    activeVisits,
     registeredThisSession,
     recognisedTracks,
     trackingOn,

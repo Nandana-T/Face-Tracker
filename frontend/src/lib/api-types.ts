@@ -239,7 +239,10 @@ export type StreamMessage =
   | { type: "snapshot" | "state" | "ended"; session: SessionOut }
   | { type: "stats"; stats: SessionStats }
   | IdentityEventMessage
-  | { type: "identities"; identities: IdentityEventMessage[] };
+  | { type: "identities"; identities: IdentityEventMessage[] }
+  | VisitEventMessage
+  | VisitStateMessage
+  | VisitsSnapshotMessage;
 
 export interface TrackIdentity {
   state: IdentityState;
@@ -298,3 +301,117 @@ export interface RecognitionStatus {
   registered_visitors: number;
   indexed_embeddings: number;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Phase 4 - visit lifecycle. Three identifiers are never interchangeable: a TRACK id (temporary,
+// session-scoped, not part of these records), a VISITOR (persistent identity) and a VISIT (one
+// presence episode - `visit_id`). A visitor can have many visits.
+// ---------------------------------------------------------------------------------------------
+export type EventType = "entry" | "exit" | "interrupted";
+export type ImageStatus = "PENDING" | "STORED" | "UNAVAILABLE" | "MISSING" | "ERASED";
+export type PersistenceStatus = "PENDING" | "DELIVERED" | "DEAD";
+export type ExitBasis = "absence" | "observation_ended" | "interrupted";
+export type VisitState = "ACTIVE" | "TEMPORARILY_MISSING" | "EXIT_PENDING" | "CLOSED" | "INTERRUPTED";
+export type Integrity = "open" | "complete" | "pending" | "evidence_missing" | "delivery_failed";
+
+/** `null` = the visitor was erased (the audit row remains, anonymised). */
+export interface VisitorRef {
+  id: string;
+  number: number | null;
+  label: string;
+}
+
+export interface VisitEventRecord {
+  id: string;
+  visit_id: string;
+  type: EventType;
+  visitor: VisitorRef | null;
+  session_id: string;
+  source_id: string;
+  source_label: string;
+  /** Wall-clock time of the first (entry) / last defensible (exit) observation. */
+  event_time: string;
+  video_ms: number;
+  /** When the event was confirmed and stored. */
+  recorded_at: string;
+  image_status: ImageStatus;
+  has_image: boolean;
+  image_kind: string | null;
+  persistence_status: PersistenceStatus;
+  exit_basis: ExitBasis | null;
+  closure_reason: string | null;
+}
+
+export interface EventList {
+  items: VisitEventRecord[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface VisitRecord {
+  id: string;
+  visitor: VisitorRef | null;
+  session_id: string;
+  source_id: string;
+  source_label: string;
+  state: VisitState;
+  entry_time: string;
+  last_observed_time: string;
+  exit_time: string | null;
+  exit_confirmed_at: string | null;
+  exit_basis: ExitBasis | null;
+  closure_reason: string | null;
+  track_segments: number;
+  /** Observed presence in video time; null while open or for an interrupted visit. */
+  duration_seconds: number | null;
+  integrity: Integrity;
+}
+
+export interface VisitDetailRecord extends VisitRecord {
+  events: VisitEventRecord[];
+}
+
+export interface EventsHealth {
+  enabled: boolean;
+  events_by_persistence: Record<string, number>;
+  events_by_image_status: Record<string, number>;
+  open_visits: number;
+  pending_image_retries: number;
+  counters: Record<string, number>;
+  events_log_present: boolean;
+}
+
+/** Live (WebSocket) messages. `event` is exactly what the events API returns minus storage details. */
+export interface VisitEventMessage {
+  type: "visit_event";
+  event: Pick<
+    VisitEventRecord,
+    | "id"
+    | "visit_id"
+    | "type"
+    | "visitor"
+    | "event_time"
+    | "session_id"
+    | "source_label"
+    | "image_status"
+    | "persistence_status"
+    | "exit_basis"
+    | "closure_reason"
+  >;
+}
+
+export interface VisitStateMessage {
+  type: "visit_state";
+  visit_id: string;
+  visitor_id: string;
+  visitor_number: number;
+  state: VisitState;
+}
+
+export interface VisitsSnapshotMessage {
+  type: "visits";
+  visits: { visit_id: string; visitor_id: string; visitor_number: number; state: VisitState }[];
+}
+
+export type EventSort = "event_time" | "recorded_at";

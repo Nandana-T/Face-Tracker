@@ -3,6 +3,7 @@ import { AlertTriangle, Trash2, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -159,8 +160,15 @@ function DrawerBody({ visitorId, onClose }: { visitorId: string; onClose: () => 
               </ul>
             )}
             <p className="mt-2 text-[11px] text-muted-foreground">
-              This is recognition history, not a visit log: entry/exit events and visit counts are not
-              part of this release.
+              This is recognition history. Entry and exit events of this visitor are in the{" "}
+              <Link
+                to={`/events?visitor=${v.label}`}
+                className="font-medium text-primary underline-offset-4 hover:underline"
+                data-testid="drawer-events-link"
+              >
+                Event Logs
+              </Link>
+              .
             </p>
           </section>
 
@@ -181,8 +189,9 @@ function DrawerBody({ visitorId, onClose }: { visitorId: string; onClose: () => 
         <DialogContent>
           <DialogTitle className="text-base font-semibold">Erase {v?.label ?? "visitor"}?</DialogTitle>
           <DialogDescription className="mt-2 text-sm text-muted-foreground">
-            This permanently deletes the stored face image, the face embeddings and the recognition
-            history of this visitor. If the same person appears again they will be registered as a new
+            This permanently deletes the stored face image, the face embeddings, the recognition
+            history and the entry/exit evidence images of this visitor. The entry/exit records stay
+            as anonymous entries without an identity. If the same person appears again they will be registered as a new
             visitor. This cannot be undone.
           </DialogDescription>
           <div className="mt-5 flex justify-end gap-2">

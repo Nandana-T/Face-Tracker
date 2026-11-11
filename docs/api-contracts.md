@@ -129,7 +129,7 @@ raw detections.
 # Phase 3 – recognition, persistent visitors, gallery
 
 Three identifiers, never interchangeable: **`track_id`** (temporary, one processing session), **`visitor_id`** (persistent facial identity; short label `V00124`) and
-`visit_id` (reserved for Phase 4, absent everywhere). All endpoints below require the bearer token; **no response ever contains an embedding, an image path or a biometric template**.
+`visit_id` (one presence episode - Phase 4; see the section below). All endpoints below require the bearer token; **no response ever contains an embedding, an image path or a biometric template**.
 
 ## Worker → API: recognition observation (binary message)
 Same envelope as a video frame (`[uint32 N][JSON header][payload]`), but the header has `"kind": "observation"` and the payload is an optional small JPEG crop (≤ 192 px) – **never relayed to browsers**.
@@ -216,3 +216,51 @@ close. Slow clients lose frames (latest wins) but never accumulate memory.
 
 ## WebSocket `/worker/ws` (worker only)
 `Authorization: Bearer $WORKER_TOKEN` is required (otherwise HTTP 403). Message types are listed in ADR 0008.
+
+# Phase 4 – visits, entry/exit events, evidence images
+Identifiers: **`visitor.id`** (person) ≠ **`visit_id`** (one presence episode) ≠ event **`id`**. A track id never appears here. All endpoints need the bearer token; **no response contains an embedding, a storage path or a credential**, and
+`503 events_disabled` is returned when `visits.enabled` is false. There is no unique-visitor count in the API.
+
+## Event / visit objects
+```json
+// EventOut
+{"id":"…32hex","visit_id":"…","type":"entry|exit|interrupted","visitor":{"id":"…","number":7,"label":"V00007"} | null,
+ "session_id":"…","source_id":"hall","source_label":"Hall camera",
+ "event_time":"2026-11-11T10:03:05.120Z",      // first (entry) / LAST defensible (exit) observation, wall clock
+ "video_ms":51000, "recorded_at":"…",            // recorded_at = when the event was confirmed and stored
+ "image_status":"STORED|PENDING|UNAVAILABLE|MISSING|ERASED","has_image":true,
+ "image_kind":"observation|last_good_observation|entry_representative|null",
+ "persistence_status":"PENDING|DELIVERED|DEAD",   // events.log delivery
+ "exit_basis":"absence|observation_ended|interrupted|null","closure_reason":"absence_timeout|end_of_stream|manual_stop|worker_lost|api_shutdown|api_restarted|source_error|null"}
+// VisitOut: id, visitor|null, session_id, source_id/label, state (ACTIVE|TEMPORARILY_MISSING|EXIT_PENDING|CLOSED|INTERRUPTED),
+//           entry_time, last_observed_time, exit_time|null, exit_confirmed_at|null, exit_basis, closure_reason, track_segments,
+//           duration_seconds (video time; ONLY for state CLOSED, null for open/interrupted visits),
+//           integrity: open|complete|pending|evidence_missing|delivery_failed
+// VisitDetail = VisitOut + events[]
+```
+`visitor` is `null` after the visitor was erased (the row remains as an anonymous audit record). `exit` means **the last sighting**, not a measured departure; `observation_ended` = the video ended or monitoring stopped while the visitor was still in view.
+
+## REST
+| Endpoint | Behaviour |
+|---|---|
+| `GET /events?limit=25&offset=0&type=&visitor=&since=&until=&session_id=&visit_id=&persistence_status=&sort=event_time\|recorded_at&order=desc` | `{items:[EventOut], total, limit, offset}`; `limit` 1–100; `visitor` = `V00012`, `12` or an id prefix (≥ 4 hex); `since`/`until` ISO times on `event_time`; invalid values → 422 |
+| `GET /events/{id}` | one event; 404 `event_not_found` (also for malformed ids) |
+| `GET /events/{id}/image` | the evidence crop, `image/jpeg`, `Cache-Control: private, no-store`; 404 `image_not_found` when none/missing/erased; the path is resolved server-side and confined to the evidence root; **no static route** exists |
+| `GET /visits?state=&visitor=&since=&until=&sort=entry_time\|exit_time&order=` | paged `VisitOut` |
+| `GET /visits/{id}` · `GET /visits/{id}/events` | `VisitDetail` / its `EventOut[]`; 404 `visit_not_found` |
+| `GET /events/health` | persistence health: events by persistence/image status, open visits, pending image retries, counters (duplicates ignored, conflicts, redeliveries, dead), latency (db/image/log), last reconciliation, whether `events.log` exists |
+| `POST /events/reconcile` | run reconciliation now (deliver missing log lines, retry/flag evidence, remove orphans, complete erasures, interrupt visits of sessions that are not live) → `{result:{…counts}}` |
+| `GET /events/log-verification` | `events.log` vs database report (see `scripts/verify_events_log.py`) |
+`DELETE /visitors/{id}` now also deletes the visitor's evidence images and anonymises their visits/events.
+
+## Stream additions (API → browser, text)
+```json
+{"type":"visit_event","event":{ "id":…,"visit_id":…,"type":"entry","visitor":{…},"event_time":…,"session_id":…,"source_label":…,"image_status":…,"persistence_status":…,"exit_basis":null,"closure_reason":null }}
+{"type":"visit_state","visit_id":…,"visitor_id":…,"visitor_number":7,"state":"TEMPORARILY_MISSING"}
+{"type":"visits","visits":[{"visit_id":…,"visitor_id":…,"visitor_number":7,"state":"ACTIVE"}]}   // sent once to a browser that (re)connects mid-session
+```
+The browser notifies once per event `id` (a replay is silent). `visit_event` is sent after the database commit.
+
+## Worker → API
+**Unchanged.** Presence is derived by the API from the per-frame header (`frame_id`, `timestamp_ms`, `tracks[].{track_id,state,observed,first_seen_ms}`) and the Phase 3 observations; the worker needs no database access and sends no visit messages. Frames with
+a non-increasing `frame_id`, a time going backwards, a negative time or malformed tracks are ignored; the existing size limits apply. Session end reasons map onto visits as described in ADR 0014.

@@ -230,6 +230,40 @@ class TrackingConfig(_Section):
     max_tracks: int = Field(default=200, ge=1, le=5000)
 
 
+class VisitsConfig(_Section):
+    """Visit lifecycle (Phase 4): one entry and one terminal event per confirmed presence episode.
+
+    Absence is measured in VIDEO time between processed frames, so a stalled worker, skipped frames
+    or an RTSP gap never counts as the visitor having left (see docs/phase-4-report.md).
+    """
+
+    enabled: bool = True
+    # No sighting for this long: the visit is TEMPORARILY_MISSING (nothing is logged yet).
+    missing_after_seconds: float = Field(default=1.5, gt=0, le=3600)
+    # No sighting for this long: the visit is closed and ONE exit event is created. A visitor who
+    # reappears (same persistent identity, any track) before this keeps the visit.
+    exit_after_seconds: float = Field(default=8, gt=0, le=3600)
+    # A gap between two processed frames longer than this is "blind time", never absence.
+    max_frame_gap_seconds: float = Field(default=2, gt=0, le=600)
+    # Evidence (face crops) - biometric; private, never served statically.
+    evidence_dir: str = "logs"
+    min_crop_quality: float = Field(default=0.3, ge=0, le=1)
+    # Persistence worker
+    queue_size: int = Field(default=1000, ge=10, le=100000)
+    max_attempts: int = Field(default=8, ge=1, le=100)
+    retry_base_seconds: float = Field(default=0.5, gt=0, le=60)
+    retry_max_seconds: float = Field(default=15, gt=0, le=3600)
+    drain_timeout_seconds: float = Field(default=10, ge=0, le=300)
+    # Reconciliation
+    orphan_grace_seconds: float = Field(default=300, ge=0, le=86400)
+
+    @model_validator(mode="after")
+    def _ordered(self) -> VisitsConfig:
+        if self.exit_after_seconds < self.missing_after_seconds:
+            raise ValueError("exit_after_seconds must not be smaller than missing_after_seconds")
+        return self
+
+
 class LoggingConfig(_Section):
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     events_file: str = "logs/events.log"
@@ -249,7 +283,12 @@ class AppConfig(_Section):
     stream: StreamConfig = Field(default_factory=StreamConfig)
     recognition: RecognitionConfig = Field(default_factory=RecognitionConfig)
     tracking: TrackingConfig = Field(default_factory=TrackingConfig)
+    visits: VisitsConfig = Field(default_factory=VisitsConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+
+    @property
+    def evidence_path(self) -> Path:
+        return resolve_path(self.visits.evidence_dir)
 
     @property
     def events_log_path(self) -> Path:

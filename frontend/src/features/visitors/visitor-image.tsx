@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { ImageOff, UserRound } from "lucide-react";
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import { api } from "@/lib/api";
+import { objectUrl } from "@/lib/object-url";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -24,12 +25,7 @@ export function VisitorImage({ visitorId, label, hasImage, className }: Props) {
     staleTime: 5 * 60_000,
     retry: false,
   });
-  const url = useMemo(() => (query.data ? URL.createObjectURL(query.data) : null), [query.data]);
-  useEffect(() => {
-    return () => {
-      if (url) URL.revokeObjectURL(url);
-    };
-  }, [url]);
+  const url = useMemo(() => (query.data ? objectUrl(query.data) : null), [query.data]);
 
   const frame = cn("flex items-center justify-center overflow-hidden bg-muted text-muted-foreground", className);
   if (url) {

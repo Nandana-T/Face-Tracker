@@ -23,7 +23,6 @@ describe("overview empty states (no invented data)", () => {
 });
 
 describe.each([
-  ["/events", "Event Logs", "No events recorded"],
   ["/analytics", "Analytics", "No analytics available"],
 ])("%s placeholder page", (path, heading, empty) => {
   it("renders heading and empty state", async () => {

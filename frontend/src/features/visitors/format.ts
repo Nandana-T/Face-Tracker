@@ -22,3 +22,11 @@ export const SORT_LABEL = {
   first_seen: "First seen",
   number: "Visitor number",
 } as const;
+
+const dateTimeSeconds = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium" });
+
+/** With seconds - event timestamps matter at that resolution. */
+export function formatDateTimeSeconds(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "—" : dateTimeSeconds.format(d);
+}

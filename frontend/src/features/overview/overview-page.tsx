@@ -42,7 +42,7 @@ export function OverviewPage() {
         <Card>
           <CardHeader>
             <CardTitle>Recent activity</CardTitle>
-            <CardDescription>Entry and exit events will be listed here.</CardDescription>
+            <CardDescription>The latest entries and exits are listed on the Event Logs page.</CardDescription>
           </CardHeader>
           <CardContent>
             <EmptyState

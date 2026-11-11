@@ -1,6 +1,12 @@
 import { authToken, notifyUnauthorized } from "./auth";
 import type {
   ErrorEnvelope,
+  EventList,
+  EventSort,
+  EventType,
+  EventsHealth,
+  VisitDetailRecord,
+  VisitEventRecord,
   HealthResponse,
   PublicConfigResponse,
   ReadinessResponse,
@@ -109,6 +115,19 @@ export function streamUrl(sessionId: string, ticket?: string): string {
   return ticket ? `${url}?ticket=${encodeURIComponent(ticket)}` : url;
 }
 
+export interface EventQuery {
+  limit: number;
+  offset: number;
+  type?: EventType;
+  /** Visitor label (V00012), number or the start of a visitor id. */
+  visitor?: string;
+  /** ISO timestamps (inclusive). */
+  since?: string;
+  until?: string;
+  sort: EventSort;
+  order: "asc" | "desc";
+}
+
 export interface VisitorQuery {
   limit: number;
   offset: number;
@@ -169,6 +188,27 @@ export const api = {
   },
   recognitionStatus: (signal?: AbortSignal) =>
     getJson<RecognitionStatus>("/recognition/status", signal),
+
+  events: (query: EventQuery, signal?: AbortSignal) => {
+    const params = new URLSearchParams({
+      limit: String(query.limit),
+      offset: String(query.offset),
+      sort: query.sort,
+      order: query.order,
+    });
+    if (query.type) params.set("type", query.type);
+    if (query.visitor?.trim()) params.set("visitor", query.visitor.trim());
+    if (query.since) params.set("since", query.since);
+    if (query.until) params.set("until", query.until);
+    return getJson<EventList>(`/events?${params.toString()}`, signal);
+  },
+  event: (id: string, signal?: AbortSignal) =>
+    getJson<VisitEventRecord>(`/events/${encodeURIComponent(id)}`, signal),
+  eventImage: (id: string, signal?: AbortSignal) =>
+    fetchImageBlob(`/events/${encodeURIComponent(id)}/image`, signal),
+  visit: (id: string, signal?: AbortSignal) =>
+    getJson<VisitDetailRecord>(`/visits/${encodeURIComponent(id)}`, signal),
+  eventsHealth: (signal?: AbortSignal) => getJson<EventsHealth>("/events/health", signal),
 
   health: (signal?: AbortSignal) => getJson<HealthResponse>("/health", signal),
 

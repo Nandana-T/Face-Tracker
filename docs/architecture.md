@@ -66,7 +66,7 @@ imperatively; React state changes at most every 400 ms for numbers and on backen
 
 ## Persistence design
 ### Identifiers - never conflate these
-* `visitor_id` - persistent facial identity (UUID hex; label `V00124` = `visitor_number`). * `track_id` - tracker-local, per session; stored only in `identity_associations` together with its `session_id`. * `visit_id` - one entry→exit lifecycle: **not implemented** (Phase 4).
+* `visitor_id` - persistent facial identity (UUID hex; label `V00124` = `visitor_number`). * `track_id` - tracker-local, per session; stored only in `identity_associations` together with its `session_id`. * `visit_id` - one confirmed presence episode of one visitor in one session (Phase 4; a visitor has many visits, a visit may span several tracks).
 
 ### Implemented schema
 * `app_metadata(key PK, value, updated_at)`.
@@ -84,12 +84,11 @@ session, and Phase 3/4 will define what must be stored once identity and visits 
   `face_embeddings(id, visitor_id FK CASCADE, model_version, dim, vector BYTEA float32, vector_sha256, quality_score; UNIQUE(visitor_id, vector_sha256))`,
   `identity_associations(id, session_id FK, track_id, visitor_id FK NULL, state CHECK, best_similarity, observations, conflicts, registered_here; UNIQUE(session_id, track_id))`. RLS enabled. Embeddings live **only** in the database (and the worker/API memory); images only in the face-image store.
 
-### Planned (with their slices)
-```
-visitors 1──* embeddings;  visitors 1──* visits 1──* track_segments;  visits 1──0..1 entry event, 1──0..1 exit event
-events(id, visit_id FK, session_id FK, type ∈ {entry, exit}, occurred_at, image_path)   UNIQUE (visit_id, type)
-```
-Image paths are stored relative to the storage root; storage goes behind an `ImageStore` protocol in Phase 4 (local → object storage).
+* Phase 4 (migration `0004`, additive): `visits(id, visit_key UNIQUE, visitor_id FK SET NULL, visitor_number, session_id FK, source_id/label, state CHECK, entry_time/entry_video_ms, last_observed_*, exit_time/exit_video_ms/exit_confirmed_at, exit_basis, closure_reason, track_segments; CHECK exit_time ≥ entry_time)`,
+  `visit_events(id, visit_id FK, visitor_id FK SET NULL, event_type ∈ {entry, exit, interrupted}, slot ∈ {entry, terminal}, idempotency_key UNIQUE, payload_hash, event_time, video_ms, recorded_at, image_status, image_path/sha256/kind, persistence_status; UNIQUE(visit_id, slot))`,
+  `event_delivery_outbox(id, event_id FK, target, status, attempts, last_error, next_retry_at, delivered_at; UNIQUE(event_id, target))`. RLS enabled. **No per-frame data is written to PostgreSQL**; an open visit's last observation is persisted at most every 30 s of video.
+
+Evidence images are stored relative to the evidence root (`entries/YYYY-MM-DD/<event_id>.jpg`, `exits/...`); the store is a small class behind which object storage can later be placed.
 
 ## Tracking (Phase 2)
 ```
@@ -123,6 +122,23 @@ API:    IdentityManager (ONE lock; PostgreSQL advisory lock for multi-process)
   duplicate/delayed observations are dropped by id; the same visitor is never propagated to two simultaneous tracks of one session; a database constraint alone cannot prevent duplicate *people* and is not claimed to.
 * **Index:** exact numpy cosine search over embeddings loaded from PostgreSQL at start-up and updated incrementally (watermark sync before every registration). pgvector/ANN were not introduced: a few thousand 128-d vectors search in microseconds and the database remains authoritative.
 * **Failure handling:** a failed registration rolls back completely (visitor + embeddings + image file), backs off and retries on fresh evidence; interrupted writes are repaired by `reconcile()` at start-up (orphan image files removed after a grace period, dangling image references cleared).
+
+## Visit lifecycle and event delivery (Phase 4)
+```
+worker ──frames (tracks + video time) + observations──► API
+API:   VisitManager (pure state machine, video time)     IdentityManager (Phase 3)
+         CANDIDATE → ACTIVE ⇄ TEMPORARILY_MISSING → EXIT_PENDING → CLOSED | INTERRUPTED
+         │ entry / terminal actions                       │ identity bound to a track
+         ▼
+       bounded queue → ONE consumer (off the frame path) → EventRecorder
+         1 evidence image  (atomic, name = event id)
+         2 DB transaction  (visit + event + outbox row; UNIQUE constraints = exactly-once *logical* event)
+         3 events.log line (from the outbox, after commit; attempt counter committed before the write)
+       → live `visit_event` / `visit_state` messages to browsers; start-up and on-demand reconciliation
+```
+* The worker never touches the database and has no new message type: presence is derived from the per-frame track metadata and the recognition observations it already sends on its authenticated channel (duplicate / out-of-order frames are ignored).
+* Rules: a visit opens when a track bound to a visitor is CONFIRMED and observed (entry time = earliest sighting of the track); a track disappearing is not an exit; absence is measured in **video time** between processed frames, gaps above `visits.max_frame_gap_seconds` are blind time; the exit time is the **last sighting**; end of file / manual stop ⇒ *observation ended*; worker loss / API shutdown / source failure ⇒ *interrupted* (no duration). Full argument: [ADR 0014](decisions/0014-visit-lifecycle-and-event-delivery.md), [phase-4-report](phase-4-report.md).
+* The API process owns the lifecycle (single-API design, like sessions). Events are exactly-once as **logical records** (constraints + deterministic ids); delivery of the image and the log line is retried until consistent. Atomicity across PostgreSQL, files and the log is **not** claimed.
 
 ## Measured resource usage
 See [`benchmarks/phase1-benchmark.md`](benchmarks/phase1-benchmark.md): one real-time stream at the shipped defaults uses

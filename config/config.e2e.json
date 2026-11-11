@@ -12,6 +12,12 @@
         "path": "datasets/e2e/alignment.mp4"
       },
       {
+        "id": "e2e-leaves",
+        "label": "E2E leaves clip",
+        "type": "file",
+        "path": "datasets/e2e/leaves.mp4"
+      },
+      {
         "id": "e2e-long",
         "label": "E2E long clip",
         "type": "file",
@@ -72,6 +78,11 @@
     "box_buffer": 0.1,
     "lost_velocity_decay_per_second": 1.0,
     "max_tracks": 200
+  },
+  "visits": {
+    "missing_after_seconds": 1,
+    "exit_after_seconds": 3,
+    "evidence_dir": "datasets/e2e/evidence"
   },
   "logging": {
     "level": "INFO",

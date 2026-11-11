@@ -199,14 +199,25 @@ async def visitor_image(visitor_id: str, request: Request) -> Response:
 async def delete_visitor(visitor_id: str, request: Request) -> Response:
     identity = _identity(request)
 
-    def run() -> bool:
+    def run() -> str | None:
         with identity._factory() as db:  # noqa: SLF001
             v = db.execute(_find(visitor_id)).scalar_one_or_none()
             vid = v.id if v else None
-        return identity.delete_visitor(vid) if vid else False
+        if not vid:
+            return None
+        visits = request.app.state.visits
+        if visits is not None:
+            # Evidence crops of this person's entries/exits are biometric: delete them first, then
+            # the identity. (An interrupted erasure is completed by reconciliation.)
+            visits.recorder.erase_visitor(vid)
+        return vid if identity.delete_visitor(vid) else None
 
-    if not await asyncio.to_thread(run):
+    erased = await asyncio.to_thread(run)
+    if erased is None:
         raise AppError(404, "visitor_not_found", "No such visitor.")
+    if request.app.state.visits is not None:
+        # an open visit of this person ends by absence, recorded de-identified and without evidence
+        request.app.state.visits.manager.forget_visitor(erased)
     return Response(status_code=204)
 
 

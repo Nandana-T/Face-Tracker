@@ -120,6 +120,9 @@ async def session_stream(websocket: WebSocket, session_id: str) -> None:
             await websocket.send_text(
                 P.encode_control({"type": "identities", "identities": identities})
             )
+        active = mgr.visits_snapshot(session_id)
+        if active:  # open visits, so a late browser shows who is currently inside
+            await websocket.send_text(P.encode_control({"type": "visits", "visits": active}))
     except (WebSocketDisconnect, OSError, RuntimeError):
         if sub is not None:
             mgr.unsubscribe(session_id, sub)

@@ -40,6 +40,7 @@ def make_config(tmp_path: Path, **video: Any) -> AppConfig:
             "video": video,
             "logging": {"events_file": str(tmp_path / "logs" / "events.log")},
             "recognition": {"faces_dir": str(tmp_path / "faces")},
+            "visits": {"evidence_dir": str(tmp_path / "evidence")},
         }
     )
 
@@ -49,6 +50,7 @@ def make_full_config(tmp_path: Path, **sections: Any) -> AppConfig:
     data: dict[str, Any] = {"logging": {"events_file": str(tmp_path / "logs" / "events.log")}}
     data.update(sections)
     data.setdefault("recognition", {}).setdefault("faces_dir", str(tmp_path / "faces"))
+    data.setdefault("visits", {}).setdefault("evidence_dir", str(tmp_path / "evidence"))
     return AppConfig.model_validate(data)
 
 

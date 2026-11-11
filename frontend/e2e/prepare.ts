@@ -44,6 +44,7 @@ export function prepareE2e(): E2eEnvironment {
   // Every run starts without visitors (database rows and face images of the E2E store only).
   run([path.join(root, "scripts", "e2e_reset_identity.py")], root, { DATABASE_URL: databaseUrl });
   fs.rmSync(path.join(root, "datasets", "e2e", "faces"), { recursive: true, force: true });
+  fs.rmSync(path.join(root, "datasets", "e2e", "evidence"), { recursive: true, force: true });
 
   const dir = path.join(root, "datasets", "e2e");
   fs.mkdirSync(dir, { recursive: true });
@@ -55,6 +56,8 @@ export function prepareE2e(): E2eEnvironment {
   };
   video("alignment.mp4", "3");
   video("long.mp4", "40");
+  // 4 s with the face, then 8 s without any face: the visitor genuinely leaves the view.
+  video("leaves.mp4", "12", ["--no-face-tail", "8"]);
   // Labelled identities for the recognition tests: person A = the public-domain portrait above; person B =
   // two DIFFERENT photographs of the same LFW person (research benchmark images, kept on D:, never committed).
   const lfw = path.join(root, "datasets", "lfw", "lfw_funneled", "Michael_Phelps");

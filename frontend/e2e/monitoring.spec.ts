@@ -562,3 +562,225 @@ test.describe("@live Phase 3 recognition", () => {
     expect((await request.get(`/api/v1/visitors/V00002`, { headers: await bearer(request) })).status()).toBe(404);
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Phase 4: visit lifecycle, entry/exit events, evidence, events.log (real detector, tracker,
+// landmarks, SFace embedder, identity manager, visit lifecycle, PostgreSQL, evidence store and the
+// mandatory events.log). Person A = the public-domain portrait.
+// ---------------------------------------------------------------------------------------------
+const eventsLog = path.join(__dirname, "..", "..", "logs", "e2e-events.log");
+
+interface EventItem {
+  id: string;
+  visit_id: string;
+  type: "entry" | "exit" | "interrupted";
+  event_time: string;
+  video_ms: number;
+  image_status: string;
+  image_kind: string | null;
+  persistence_status: string;
+  exit_basis: string | null;
+  closure_reason: string | null;
+  visitor: { id: string; label: string } | null;
+}
+
+async function listEvents(request: APIRequestContext, query = ""): Promise<{ items: EventItem[]; total: number }> {
+  return (await request.get(`/api/v1/events?limit=100&order=asc${query}`, { headers: await bearer(request) })).json();
+}
+
+function logLinesFor(ids: string[]): Record<string, unknown>[] {
+  return fs
+    .readFileSync(eventsLog, "utf8")
+    .split("\n")
+    .filter((l) => l.startsWith("{") && ids.some((id) => l.includes(id)))
+    .map((l) => JSON.parse(l));
+}
+
+async function imageLoads(locator: ReturnType<Page["getByRole"]>) {
+  await expect.poll(() => locator.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0)).toBe(true);
+}
+
+test.describe("@live Phase 4 visits", () => {
+  test.beforeEach(async ({ request }) => {
+    await stopAnythingRunning(request);
+    await clearVisitors(request);
+  });
+
+  test("@live a visitor enters and leaves the view: one entry, one exit, evidence, timeline, details and events.log", async ({ page, request }) => {
+    test.setTimeout(240_000);
+    await page.goto("/live");
+    await signIn(page);
+    await expect(page.getByTestId("start-button")).toBeEnabled({ timeout: 45_000 });
+    await source(page, "E2E leaves clip").check({ force: true });
+    await page.getByTestId("start-button").click();
+
+    // registered, then the entry is confirmed and announced exactly once
+    await expect(page.getByText("New visitor registered: V00001")).toBeVisible({ timeout: 40_000 });
+    await expect(page.getByText("V00001 entered")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("visit-active-count")).toHaveText("1");
+    // the face disappears from the video; after the grace period exactly one exit is recorded
+    await expect(page.getByText("V00001 left the view")).toBeVisible({ timeout: 40_000 });
+    await expect(page.getByTestId("visit-active-count")).toHaveText("0");
+    await expect(viewport(page)).toHaveAttribute("data-view", "completed", { timeout: 40_000 });
+    await expect(page.getByTestId("visit-recent-item")).toHaveCount(2);
+
+    // API truth: exactly one entry and one exit of ONE visit, nothing duplicated
+    const events = await listEvents(request, "&visitor=V00001");
+    expect(events.total).toBe(2);
+    const [entry, exit] = events.items;
+    expect([entry!.type, exit!.type]).toEqual(["entry", "exit"]);
+    expect(entry!.visit_id).toBe(exit!.visit_id);
+    expect(entry!.visit_id).not.toBe(entry!.visitor!.id); // visit id != visitor id
+    expect(exit!.exit_basis).toBe("absence");
+    expect(exit!.closure_reason).toBe("absence_timeout");
+    expect(exit!.video_ms).toBeGreaterThan(entry!.video_ms);
+    expect(new Date(exit!.event_time).getTime()).toBeGreaterThanOrEqual(new Date(entry!.event_time).getTime());
+    for (const e of events.items) {
+      expect(e.image_status).toBe("STORED");
+      expect(e.persistence_status).toBe("DELIVERED");
+    }
+    expect(entry!.image_kind).toBe("observation");
+    expect(exit!.image_kind).toBe("last_good_observation"); // the last good observation, not a new capture
+    const headers = await bearer(request);
+    const visit = await (await request.get(`/api/v1/visits/${entry!.visit_id}`, { headers })).json();
+    expect(visit.state).toBe("CLOSED");
+    expect(visit.duration_seconds).toBeGreaterThan(0);
+    expect(visit.integrity).toBe("complete");
+    expect(JSON.stringify([events, visit])).not.toMatch(/\.jpg|image_path|embedding|vector|logs\/|datasets/i);
+
+    // Event Logs shows the real records with authenticated thumbnails; the visit opens with both images
+    await nav(page).getByRole("link", { name: "Event Logs" }).click();
+    const timeline = page.getByRole("list", { name: "Event timeline" });
+    await expect(timeline).toBeVisible();
+    const rows = timeline.getByTestId("event-row").filter({ hasText: "V00001" });
+    await expect(rows).toHaveCount(2);
+    await expect(rows.first().getByTestId("event-type")).toHaveText("Exit"); // newest first
+    await expect(rows.nth(1).getByTestId("event-type")).toHaveText("Entry");
+    await imageLoads(rows.first().getByRole("img"));
+    await imageLoads(rows.nth(1).getByRole("img"));
+    await rows.first().getByTestId("event-open").click();
+    const drawer = page.getByTestId("visit-drawer");
+    await expect(drawer.getByTestId("visit-title")).toHaveText("Visit of V00001");
+    await expect(drawer.getByTestId("visit-state")).toHaveText("Closed");
+    await expect(drawer.getByTestId("visit-basis")).toHaveText("Left the view");
+    await expect(drawer.getByTestId("visit-duration")).not.toHaveText(/unknown|in progress/);
+    await expect(drawer.getByTestId("visit-integrity")).toHaveAttribute("data-integrity", "complete");
+    await imageLoads(drawer.getByRole("img").first());
+    await imageLoads(drawer.getByRole("img").nth(1));
+    await expect(drawer.getByTestId("evidence-note").nth(1)).toContainText("Last good observation");
+    await page.keyboard.press("Escape");
+    await expect(drawer).toHaveCount(0);
+
+    // filters work against the real data
+    await page.getByTestId("event-filter-type").selectOption("entry");
+    await expect(timeline.getByTestId("event-row").filter({ hasText: "V00001" })).toHaveCount(1);
+    await page.getByTestId("event-filter-type").selectOption("");
+    await page.getByTestId("event-filter-visitor").fill("V00099");
+    await page.getByTestId("event-search-submit").click();
+    await expect(page.getByText("No events match these filters")).toBeVisible();
+
+    // image access is private
+    expect((await request.get(`/api/v1/events/${entry!.id}/image`)).status()).toBe(401);
+    const img = await request.get(`/api/v1/events/${entry!.id}/image`, { headers });
+    expect(img.status()).toBe(200);
+    expect(img.headers()["content-type"]).toBe("image/jpeg");
+    expect(img.headers()["cache-control"]).toContain("no-store");
+
+    // events.log: one auditable line per event, with the stable ids, no biometric payload
+    const lines = logLinesFor([entry!.id, exit!.id]).filter((l) => String(l.message).startsWith("visit."));
+    expect(lines).toHaveLength(2);
+    expect(lines.map((l) => l.message).sort()).toEqual(["visit.entry", "visit.exit"]);
+    const data = lines[0]!.data as Record<string, unknown>;
+    expect(data).toMatchObject({ visit_id: entry!.visit_id, persistence: "committed", delivery_attempt: 1 });
+    expect(JSON.stringify(lines)).not.toMatch(/embedding|vector/i);
+    const report = await (await request.get("/api/v1/events/log-verification", { headers })).json();
+    expect(report.unexplained_duplicates_count).toBe(0);
+    expect(report.missing_in_log_count).toBe(0);
+  });
+
+  test("@live end of the video closes the visit as observation-ended; the same person later gets a NEW visit, not a new visitor; replays and a restart change nothing", async ({ page, request }) => {
+    test.setTimeout(300_000);
+    await page.goto("/live");
+    await signIn(page);
+    await expect(page.getByTestId("start-button")).toBeEnabled({ timeout: 45_000 });
+
+    await source(page, "E2E alignment clip").check({ force: true });
+    await page.getByTestId("start-button").click();
+    await expect(page.getByText("V00001 entered")).toBeVisible({ timeout: 40_000 });
+    await expect(viewport(page)).toHaveAttribute("data-view", "completed", { timeout: 40_000 });
+    // the video ended while the visitor was still in view: observation ended, NOT a departure
+    await expect(page.getByText("V00001: observation ended")).toBeVisible({ timeout: 10_000 });
+
+    await processClip(page, "E2E alignment clip"); // the same person again, in a new session
+    await expect(page.getByText("Visitor recognized: V00001")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("V00001 entered")).toBeVisible({ timeout: 10_000 });
+
+    const headers = await bearer(request);
+    const events = await listEvents(request, "&visitor=V00001");
+    expect(events.total).toBe(4);
+    expect(events.items.map((e) => e.type)).toEqual(["entry", "exit", "entry", "exit"]);
+    const visitIds = new Set(events.items.map((e) => e.visit_id));
+    expect(visitIds.size).toBe(2); // two visits ...
+    expect(new Set(events.items.map((e) => e.visitor!.id)).size).toBe(1); // ... one persistent visitor
+    expect(events.items.filter((e) => e.type === "exit").every((e) => e.exit_basis === "observation_ended")).toBe(true);
+    expect((await (await request.get("/api/v1/visitors", { headers })).json()).total).toBe(1);
+
+    // Replaying the delivery machinery (reconciliation twice) creates nothing and changes nothing.
+    const before = JSON.stringify(await listEvents(request));
+    for (let i = 0; i < 2; i++) {
+      const r = await request.post("/api/v1/events/reconcile", { headers });
+      expect(r.status()).toBe(200);
+    }
+    expect(JSON.stringify(await listEvents(request))).toBe(before);
+    const report = await (await request.get("/api/v1/events/log-verification", { headers })).json();
+    expect(report.unexplained_duplicates_count).toBe(0);
+    expect(report.missing_in_log_count).toBe(0);
+    const lines = logLinesFor(events.items.map((e) => e.id)).filter((l) => String(l.message).startsWith("visit."));
+    expect(lines).toHaveLength(4);
+
+    // Restart the whole application: everything persists, evidence is still served, nothing is re-created.
+    await restartApiStack();
+    const after = await listEvents(request);
+    expect(JSON.stringify(after)).toBe(before);
+    await page.goto("/events");
+    await expect(page.getByRole("list", { name: "Event timeline" })).toBeVisible({ timeout: 30_000 });
+    const first = page.getByTestId("event-row").filter({ hasText: "V00001" }).first();
+    await imageLoads(first.getByRole("img"));
+    const post = await (await request.get("/api/v1/events/log-verification", { headers: await bearer(request) })).json();
+    expect(post.unexplained_duplicates_count).toBe(0);
+    expect(post.missing_in_log_count).toBe(0);
+  });
+
+  test("@live a crash while a visitor is inside leaves exactly one honest INTERRUPTED record after the restart", async ({ page, request }) => {
+    test.setTimeout(240_000);
+    await page.goto("/live");
+    await signIn(page);
+    await expect(page.getByTestId("start-button")).toBeEnabled({ timeout: 45_000 });
+    await source(page, "E2E long clip").check({ force: true });
+    await page.getByTestId("start-button").click();
+    await expect(page.getByText("V00001 entered")).toBeVisible({ timeout: 40_000 });
+
+    await restartApiStack(); // API and worker die while the visitor is in view
+
+    const events = await listEvents(request, "&visitor=V00001");
+    expect(events.items.map((e) => e.type)).toEqual(["entry", "interrupted"]);
+    const [entry, interrupted] = events.items;
+    expect(interrupted!.closure_reason).toBe("api_restarted");
+    expect(interrupted!.exit_basis).toBe("interrupted");
+    expect(interrupted!.image_kind).toBe("entry_representative"); // no new face was captured; this is said openly
+    expect(interrupted!.image_status).toBe("STORED");
+    const headers = await bearer(request);
+    const visit = await (await request.get(`/api/v1/visits/${entry!.visit_id}`, { headers })).json();
+    expect(visit.state).toBe("INTERRUPTED");
+    expect(visit.duration_seconds).toBeNull(); // the end of an interrupted visit is unknown
+
+    await page.goto(`/events?visit=${entry!.visit_id}`);
+    const drawer = page.getByTestId("visit-drawer");
+    await expect(drawer.getByTestId("visit-state")).toHaveText("Interrupted", { timeout: 30_000 });
+    await expect(drawer.getByTestId("visit-duration")).toHaveText("unknown");
+    await expect(drawer.getByTestId("visit-reason")).toHaveText("API restarted");
+    // another restart changes nothing (reconciliation is idempotent)
+    await restartApiStack();
+    expect((await listEvents(request, "&visitor=V00001")).total).toBe(2);
+  });
+});

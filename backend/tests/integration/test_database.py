@@ -70,7 +70,7 @@ def test_api_ready_and_status_with_real_database(
     assert ready.json()["checks"]["database"]["status"] == "ok"
     assert status.json()["database"] == {
         "status": "ok",
-        "migration_revision": "0003",
+        "migration_revision": "0004",
         "migrations_applied": True,
     }
 
@@ -131,19 +131,35 @@ def test_migrations_are_repeatable_and_never_destroy_existing_data(
             )
         )
 
-    for _ in range(3):  # 0002 -> 0003 (Phase 3) with data present; re-running is a no-op
+    command.upgrade(cfg, "0003")  # Phase 3 tables, then a visitor that 0004 must not disturb
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO visitors (id, visitor_number, registration_key, status, model_version, "
+                "recognition_count) VALUES ('v1', 1, 's1:1', 'REGISTERED', 'sface', 0)"
+            )
+        )
+    for _ in range(3):  # 0003 -> 0004 (Phase 4) with data present; re-running is a no-op
         command.upgrade(cfg, "head")
     with engine.connect() as conn:
+        assert conn.execute(text("SELECT count(*) FROM visitors")).scalar() == 1
         assert (
             conn.execute(text("SELECT value FROM app_metadata WHERE key = 'keep'")).scalar() == "me"
         )
         assert conn.execute(text("SELECT count(*) FROM processing_sessions")).scalar() == 1
-        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0003"
-        assert {"visitors", "face_embeddings", "identity_associations"} <= set(
-            inspect(engine).get_table_names()
-        )
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0004"
+        assert {
+            "visitors", "face_embeddings", "identity_associations",
+            "visits", "visit_events", "event_delivery_outbox",
+        } <= set(inspect(engine).get_table_names())  # fmt: skip
 
     # Rolling the newest migration back drops only what it created.
+    command.downgrade(cfg, "0003")
+    names = set(inspect(engine).get_table_names())
+    assert not {"visits", "visit_events", "event_delivery_outbox"} & names
+    assert "visitors" in names
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT count(*) FROM visitors")).scalar() == 1
     command.downgrade(cfg, "0002")
     names = set(inspect(engine).get_table_names())
     assert not {"visitors", "face_embeddings", "identity_associations"} & names
