@@ -19,6 +19,7 @@ from app.services.uploads import read_label
 from app.vision.sources.file_source import FileVideoSource
 from app.vision.sources.interfaces import SourceOpenError, VideoSource
 from app.vision.sources.rtsp_source import RtspVideoSource
+from app.vision.sources.webcam_source import WebcamVideoSource
 
 Availability = Literal["available", "unavailable"]
 
@@ -27,7 +28,7 @@ Availability = Literal["available", "unavailable"]
 class SourceDescriptor:
     id: str
     label: str
-    type: Literal["file", "rtsp"]
+    type: Literal["file", "rtsp", "webcam"]
     availability: Availability
     detail: str | None = None
     origin: Literal["config", "sample", "upload"] = "config"
@@ -71,6 +72,14 @@ def _entries(config: AppConfig, env: Mapping[str, str]) -> list[_Resolved]:
             )
     for s in config.video.sources:
         out.append(_resolve_def(s, env))
+    if config.video.webcam_enabled:
+        # Not probed here: opening a camera is slow and would grab the device on every listing.
+        out.append(
+            _Resolved(
+                SourceDescriptor("webcam", "This computer's camera", "webcam", "available"),
+                str(config.video.webcam_index),
+            )
+        )
     sample_dir = resolve_path(config.video.sample_dir)
     if sample_dir.is_dir():
         taken = {e.descriptor.id for e in out}
@@ -170,6 +179,12 @@ def build_source(
             )
         if e.descriptor.type == "file":
             return FileVideoSource(Path(e.location), config.video.max_consecutive_read_failures)
+        if e.descriptor.type == "webcam":
+            return WebcamVideoSource(
+                int(e.location),
+                reconnect_interval_s=config.video.reconnect_interval_seconds,
+                on_state=on_state,  # type: ignore[arg-type]
+            )
         r = config.video.rtsp
         return RtspVideoSource(
             e.location,

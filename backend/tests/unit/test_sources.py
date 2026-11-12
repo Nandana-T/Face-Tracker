@@ -302,3 +302,42 @@ def test_build_source_validates(tmp_path: Path) -> None:
     with pytest.raises(SourceOpenError) as exc:
         build_source(cfg, "unknown", {})
     assert exc.value.code == "source_not_found"
+
+
+# ---- Webcam source (this computer's camera; controlled fakes - no device is opened) ----------
+def test_webcam_is_listed_only_when_enabled_and_builds_a_live_source(tmp_path: Path) -> None:
+    off = make_full_config(tmp_path)
+    assert all(s.id != "webcam" for s in list_sources(off, {}))
+    on = make_full_config(tmp_path, video={"webcam_enabled": True, "webcam_index": 1})
+    cam = get_descriptor(on, "webcam", {})
+    assert cam is not None and cam.type == "webcam" and cam.availability == "available"
+    src = build_source(on, "webcam", {})
+    assert src.is_live and src.url_for_log == "webcam:1"
+
+
+def test_webcam_streams_frames_and_gives_up_when_the_camera_disappears() -> None:
+    from app.vision.sources.webcam_source import WebcamVideoSource
+
+    fake = FakeRtsp([[True, True, True], []], [True, False, False])
+    src = WebcamVideoSource(
+        0,
+        reconnect_interval_s=1,
+        max_reconnect_attempts=2,
+        capture_factory=fake.factory,
+        sleep=lambda _s: None,
+    )
+    assert src.open().is_live
+    got = []
+    with pytest.raises(SourceUnavailable) as exc:
+        for frame in src.frames():
+            got.append(frame.index)
+    assert got == [0, 1, 2] and exc.value.code == "camera_unavailable"
+
+
+def test_webcam_that_cannot_be_opened_reports_it() -> None:
+    from app.vision.sources.webcam_source import WebcamVideoSource
+
+    src = WebcamVideoSource(0, capture_factory=FakeRtsp([[]], [False]).factory)
+    with pytest.raises(SourceOpenError) as exc:
+        src.open()
+    assert exc.value.code == "camera_unavailable"

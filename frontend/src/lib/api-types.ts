@@ -83,7 +83,7 @@ export const ACTIVE_STATES: readonly SessionState[] = ["STARTING", "RUNNING", "S
 export interface SourceOut {
   id: string;
   label: string;
-  type: "file" | "rtsp";
+  type: "file" | "rtsp" | "webcam";
   availability: "available" | "unavailable";
   detail: string | null;
   /** Only "upload" sources can be deleted from the dashboard. */

@@ -4,6 +4,8 @@
     "source": "",
     "reconnect_interval_seconds": 5,
     "sample_dir": "datasets/samples",
+    "webcam_enabled": true,
+    "webcam_index": 0,
     "sources": [],
     "rtsp": {
       "connect_timeout_seconds": 10,

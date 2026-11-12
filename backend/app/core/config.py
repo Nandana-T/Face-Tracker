@@ -83,6 +83,9 @@ class VideoConfig(_Section):
     # folder (same machine / shared folder); every upload is deleted explicitly, never implicitly.
     upload_dir: str = "storage/uploads"
     uploads_enabled: bool = True
+    # Offer the computer's own camera as source "webcam" (needs the WORKER on a machine with a camera).
+    webcam_enabled: bool = False
+    webcam_index: int = Field(default=0, ge=0, le=9)
     max_upload_mb: int = Field(default=500, ge=1, le=4096)
     sources: list[SourceDef] = Field(default_factory=list)
     rtsp: RtspConfig = Field(default_factory=RtspConfig)

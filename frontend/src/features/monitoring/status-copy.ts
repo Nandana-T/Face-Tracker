@@ -188,6 +188,7 @@ function describeError(code: string, message?: string): ViewState {
 
 export const ACTIVE_VIEW_KEYS: readonly ViewKey[] = ["connecting", "processing", "stopping", "camera_disconnected"];
 
-export function sourceTypeLabel(type: "file" | "rtsp"): string {
+export function sourceTypeLabel(type: "file" | "rtsp" | "webcam"): string {
+  if (type === "webcam") return "Live webcam";
   return type === "file" ? "Video file" : "RTSP camera";
 }

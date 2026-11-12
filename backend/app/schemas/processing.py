@@ -15,7 +15,7 @@ class SourceOut(BaseModel):
 
     id: str
     label: str
-    type: Literal["file", "rtsp"]
+    type: Literal["file", "rtsp", "webcam"]
     availability: Literal["available", "unavailable"]
     detail: str | None = None
     # where the source comes from; only "upload" sources can be deleted from the dashboard
