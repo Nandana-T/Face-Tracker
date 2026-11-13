@@ -1,0 +1,28 @@
+{
+  "items": [
+    {
+      "id": "6b5993fa69c9c944ec46bffab2059f5d",
+      "visitor": {
+        "id": "c6aeca6ef37947aa9f26ca517e254bd7",
+        "number": 1,
+        "label": "V00001"
+      },
+      "session_id": "a37d8d49cd134b7f9e0a03b22fd12323",
+      "source_id": "e2e-leaves",
+      "source_label": "E2E leaves clip",
+      "state": "CLOSED",
+      "entry_time": "2026-11-13T06:40:01.974343Z",
+      "last_observed_time": "2026-11-13T06:40:05.899443Z",
+      "exit_time": "2026-11-13T06:40:05.899443Z",
+      "exit_confirmed_at": "2026-11-13T06:40:08.913876Z",
+      "exit_basis": "absence",
+      "closure_reason": "absence_timeout",
+      "track_segments": 1,
+      "duration_seconds": 4,
+      "integrity": "complete"
+    }
+  ],
+  "total": 1,
+  "limit": 10,
+  "offset": 0
+}

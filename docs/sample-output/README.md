@@ -7,3 +7,5 @@ Produced by `scripts/make_sample_output.py` from the controlled end-to-end run. 
 * `visits-and-events.json` - sample visits with their entry/exit events
 * `events-log-excerpt.jsonl` - the matching `events.log` lines (delivery attempt, persistence outcome)
 * `images/` - timestamped entry/exit crops (entry = best observation; exit = last good observation, not a new capture)
+* `screenshots/` - real dashboard screenshots (Overview, Visitors gallery, Analytics) captured by `frontend/e2e/capture-evidence.spec.ts`
+* `visitor-records.json`, `visit-records.json`, `event-records.json`, `analytics-dashboard-overview.json` - API responses from that same run; `events-log-dashboard-run.jsonl` - the matching `events.log` lines

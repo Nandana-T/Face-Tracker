@@ -1,0 +1,18 @@
+{
+  "items": [
+    {
+      "id": "c6aeca6ef37947aa9f26ca517e254bd7",
+      "number": 1,
+      "label": "V00001",
+      "status": "REGISTERED",
+      "first_seen_at": "2026-11-13T06:40:03.386969Z",
+      "last_seen_at": "2026-11-13T06:40:04.005040Z",
+      "recognition_count": 0,
+      "has_image": true,
+      "model_version": "sface-2021dec"
+    }
+  ],
+  "total": 1,
+  "limit": 10,
+  "offset": 0
+}

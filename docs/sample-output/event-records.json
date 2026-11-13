@@ -1,0 +1,51 @@
+{
+  "items": [
+    {
+      "id": "7e4a985610d1c3d5496838ed8f345213",
+      "visit_id": "6b5993fa69c9c944ec46bffab2059f5d",
+      "type": "entry",
+      "visitor": {
+        "id": "c6aeca6ef37947aa9f26ca517e254bd7",
+        "number": 1,
+        "label": "V00001"
+      },
+      "session_id": "a37d8d49cd134b7f9e0a03b22fd12323",
+      "source_id": "e2e-leaves",
+      "source_label": "E2E leaves clip",
+      "event_time": "2026-11-13T06:40:01.974343Z",
+      "video_ms": 0,
+      "recorded_at": "2026-11-13T06:40:03.393836Z",
+      "image_status": "STORED",
+      "has_image": true,
+      "image_kind": "observation",
+      "persistence_status": "DELIVERED",
+      "exit_basis": null,
+      "closure_reason": null
+    },
+    {
+      "id": "2b2ea25023e5e4d0a689353254824483",
+      "visit_id": "6b5993fa69c9c944ec46bffab2059f5d",
+      "type": "exit",
+      "visitor": {
+        "id": "c6aeca6ef37947aa9f26ca517e254bd7",
+        "number": 1,
+        "label": "V00001"
+      },
+      "session_id": "a37d8d49cd134b7f9e0a03b22fd12323",
+      "source_id": "e2e-leaves",
+      "source_label": "E2E leaves clip",
+      "event_time": "2026-11-13T06:40:05.899443Z",
+      "video_ms": 3960,
+      "recorded_at": "2026-11-13T06:40:08.913876Z",
+      "image_status": "STORED",
+      "has_image": true,
+      "image_kind": "last_good_observation",
+      "persistence_status": "DELIVERED",
+      "exit_basis": "absence",
+      "closure_reason": "absence_timeout"
+    }
+  ],
+  "total": 2,
+  "limit": 10,
+  "offset": 0
+}

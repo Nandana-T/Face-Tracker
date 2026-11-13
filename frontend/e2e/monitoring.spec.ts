@@ -52,6 +52,8 @@ test.describe("Live Monitoring (stubbed backend)", () => {
     await source(page, "Sample: demo").focus();
     await expect(source(page, "Sample: demo")).toBeFocused();
     await page.keyboard.press("Tab");
+    await expect(page.getByTestId("upload-button")).toBeFocused(); // the upload panel sits between the sources and Start
+    await page.keyboard.press("Tab");
     await expect(page.getByTestId("start-button")).toBeFocused();
     expect(box!.x + box!.width).toBeLessThanOrEqual(820); // no horizontal overflow
   });

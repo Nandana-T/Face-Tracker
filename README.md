@@ -6,13 +6,15 @@
 
 ![Python](https://img.shields.io/badge/python-3.12-blue) ![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688) ![React](https://img.shields.io/badge/React-19-61dafb) ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15%2B-336791) ![ONNX Runtime](https://img.shields.io/badge/ONNX%20Runtime-CPU-lightgrey) ![Status](https://img.shields.io/badge/deployment-prepared%2C%20not%20live-orange)
 
-## Watch the Demonstration
+## 🎥 Watch the Demonstration
 
-**TODO: Add the Loom/YouTube demonstration video link here before submission.** The video has not been recorded or uploaded yet, and the hackathon states that a submission without one is not reviewed. The recording plan is in [docs/submission/demo-video-script.md](docs/submission/demo-video-script.md).
+[Watch the Complete Katomaran Face Tracker Demonstration](https://www.loom.com/share/0820e258870e4076934da68bf7a79c00)
+
+The recording plan that was followed is in [docs/submission/demo-video-script.md](docs/submission/demo-video-script.md).
 
 | Deliverable | Status |
 |---|---|
-| Demo video (Loom/YouTube) | **TODO, not recorded** |
+| Demo video (Loom) | [Watch on Loom](https://www.loom.com/share/0820e258870e4076934da68bf7a79c00) (shared publicly; checked by the project owner) |
 | GitHub repository | https://github.com/Nandana-T/Face-Tracker |
 | Live deployed frontend / API | **Not deployed.** Configuration is prepared ([Deployment](#deployment)) |
 | Sample outputs | [docs/sample-output/](docs/sample-output/) (public-domain fixture only) |
@@ -338,20 +340,32 @@ Repeated tracks, visits or retries never increase the global identity count by t
 
 ## Sample outputs
 
-Safe examples (public-domain NASA portrait fixture, no real person) are in [docs/sample-output/](docs/sample-output/):
+All files below are **real output of the running application**, produced from the public-domain NASA portrait test fixture and an embedded local PostgreSQL database. They contain no real visitor, no hackathon footage, no credentials and no embeddings.
+
+**Dashboard screenshots** (captured from the real stack with Playwright, `frontend/e2e/capture-evidence.spec.ts`)
+
+| Screenshot | Shows |
+|---|---|
+| [Overview](docs/sample-output/screenshots/overview-dashboard.png) | Unique visitors 1, entries 1, exits 1, recent activity |
+| [Visitor gallery](docs/sample-output/screenshots/visitor-gallery.png) | Registered identity `V00001` with its face image |
+| [Analytics](docs/sample-output/screenshots/analytics.png) | Scoped counts computed from the database |
+
+![Overview dashboard](docs/sample-output/screenshots/overview-dashboard.png)
+![Visitor gallery](docs/sample-output/screenshots/visitor-gallery.png)
+
+**Records from the same run** (exported from the API responses, which never contain embeddings or server paths)
 
 | Sample | File |
 |---|---|
-| Analytics response | [analytics-overview.json](docs/sample-output/analytics-overview.json) |
-| Visit and event database records | [visits-and-events.json](docs/sample-output/visits-and-events.json) |
-| `events.log` excerpt | [events-log-excerpt.jsonl](docs/sample-output/events-log-excerpt.jsonl) |
-| Count reconciliation | [reconciliation.json](docs/sample-output/reconciliation.json) |
-| Entry image | [images/entry-ad5187e3.jpg](docs/sample-output/images/entry-ad5187e3.jpg) |
-| Exit image | [images/exit-d3331967.jpg](docs/sample-output/images/exit-d3331967.jpg) |
+| Visitor record | [visitor-records.json](docs/sample-output/visitor-records.json) |
+| Visit record | [visit-records.json](docs/sample-output/visit-records.json) |
+| Event records (entry and exit) | [event-records.json](docs/sample-output/event-records.json) |
+| Analytics response | [analytics-dashboard-overview.json](docs/sample-output/analytics-dashboard-overview.json) |
+| Matching `events.log` lines | [events-log-dashboard-run.jsonl](docs/sample-output/events-log-dashboard-run.jsonl) (each database event has exactly one record) |
 
-Evidence from the **real hackathon footage** is private and git-ignored (it shows real people); only aggregate numbers are published in [docs/final-evaluation.md](docs/final-evaluation.md) and [docs/real-video-validation.md](docs/real-video-validation.md).
+**Earlier run (local RTSP server source):** [analytics](docs/sample-output/analytics-overview.json), [visits and events](docs/sample-output/visits-and-events.json), [events.log excerpt](docs/sample-output/events-log-excerpt.jsonl), [reconciliation](docs/sample-output/reconciliation.json), [entry image](docs/sample-output/images/entry-ad5187e3.jpg), [exit image](docs/sample-output/images/exit-d3331967.jpg).
 
-**Gaps (TODO):** no detection/tracking screenshot of the dashboard and no visitor-table record are included yet. They would be added only from the fixture, not from real footage.
+Evidence from the **real hackathon footage** is private and git-ignored (it shows real people); only aggregate numbers are published in [docs/final-evaluation.md](docs/final-evaluation.md) and [docs/real-video-validation.md](docs/real-video-validation.md). The dashboard screenshots do not include a live-video detection overlay; that appears only during a running session.
 
 ## Testing and quality assurance
 
