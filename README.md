@@ -10,8 +10,6 @@
 
 [Watch the Complete Katomaran Face Tracker Demonstration](https://www.loom.com/share/0820e258870e4076934da68bf7a79c00)
 
-The recording plan that was followed is in [docs/submission/demo-video-script.md](docs/submission/demo-video-script.md).
-
 | Deliverable | Status |
 |---|---|
 | Demo video (Loom) | [Watch on Loom](https://www.loom.com/share/0820e258870e4076934da68bf7a79c00) (shared publicly; checked by the project owner) |
