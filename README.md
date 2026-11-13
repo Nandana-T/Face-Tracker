@@ -1,199 +1,496 @@
-# Katomaran AI – Intelligent Face Tracker & Visitor Analytics
+# Katomaran AI — Intelligent Face Tracker & Visitor Analytics
 
-Detects, recognises, registers, tracks and counts unique visitors from video files and RTSP streams, with a real-time dashboard.
+**Detects, tracks and recognises faces in video files, RTSP streams and a local webcam, registers new faces automatically, logs one entry and one exit per visit with timestamped face evidence, and reports unique-visitor analytics from the database.**
 
-> **Current state: Phase 6 (deployment readiness, integration hardening, submission package) on top of Phases 0-5, awaiting your approval for the external steps.** The software is verified locally, including a production-mode TLS run with a remote-style worker and a local RTSP-server integration. **No cloud service has been provisioned, the hosted database is still at migration `0002`, and the hackathon form has not been submitted** ([docs/phase-6-report.md](docs/phase-6-report.md)). Earlier state: Phase 5 (unique-visitor counting and analytics). Everything marked ✅ exists and is tested. **Counts are registered face *identities*, visits and events from PostgreSQL - never a count of physical people**; faces the recognition gate did not resolve are never added to a unique count ([docs/phase-5-report.md](docs/phase-5-report.md)).
-> Previous state: Phase 4 (visit lifecycle, entry/exit events, durable persistence).
-> The app detects faces, tracks them (temporary `#id` per session), **recognises/registers persistent visitors** (`V00124`) and records **visits**: one confirmed presence episode has one *entry* and one *exit*
-> event in PostgreSQL, as a face crop and in `events.log`. A track id is not a visitor id and neither is a visit id. The number of visits or events is never a number of people, and the UI never shows an invented number. Details and honest limitations: [docs/phase-4-report.md](docs/phase-4-report.md), [docs/phase-3-report.md](docs/phase-3-report.md),
-> [docs/phase-2-report.md](docs/phase-2-report.md), [docs/phase-1-5-report.md](docs/phase-1-5-report.md), [docs/phase-1-report.md](docs/phase-1-report.md).
-> **Biometric data:** recognition stores face embeddings and face images - read [docs/privacy-and-security.md](docs/privacy-and-security.md) and the model-licence notes ([ADR 0013](docs/decisions/0013-recognition-model-and-licensing.md): hackathon/non-commercial scope) before using it on real people.
+> **Unique visitor metrics count registered face identities, not verified physical people.** Faces that fail the recognition quality gate are never identified or counted, and no person-level ground truth exists for the hackathon footage.
 
-| Capability | Status |
+![Python](https://img.shields.io/badge/python-3.12-blue) ![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688) ![React](https://img.shields.io/badge/React-19-61dafb) ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15%2B-336791) ![ONNX Runtime](https://img.shields.io/badge/ONNX%20Runtime-CPU-lightgrey) ![Status](https://img.shields.io/badge/deployment-prepared%2C%20not%20live-orange)
+
+## Watch the Demonstration
+
+**TODO: Add the Loom/YouTube demonstration video link here before submission.** The video has not been recorded or uploaded yet, and the hackathon states that a submission without one is not reviewed. The recording plan is in [docs/submission/demo-video-script.md](docs/submission/demo-video-script.md).
+
+| Deliverable | Status |
 |---|---|
-| Monorepo, FastAPI + Alembic + PostgreSQL foundation, health/ready/status/config APIs, design-system dashboard | ✅ Phase 0 |
-| Video file + RTSP source adapters (timeouts, bounded reconnect, credential redaction) | ✅ Phase 1 (RTSP: tested with fakes/failure paths only – **no real camera tested**) |
-| YOLO11n-face detector (ONNX Runtime, CPU), configurable `frame_skip`, bounded queues / back-pressure | ✅ Phase 1 |
-| Separate worker process ⇄ API over an authenticated WebSocket; session lifecycle (start/stop/status/events) | ✅ Phase 1 |
-| Live Monitoring page: canvas video with aligned boxes, source controls, honest status states, detection summary | ✅ Phase 1 |
-| Multi-face tracking (ByteTrack-style, in the worker): temporary session-scoped ids, TENTATIVE→CONFIRMED→LOST→REMOVED lifecycle, observed vs predicted boxes, tracking panel + track details | ✅ Phase 2 ([report](docs/phase-2-report.md), [benchmark](docs/benchmarks/phase2-tracking.md)) |
-| Sign-in (admin password → signed token), single-use stream tickets, production start-up guards, test-DB safety | ✅ Phase 1.5 |
-| Validation on the hackathon footage (23 videos) | ✅ [docs/real-video-validation.md](docs/real-video-validation.md) |
-| Measured CPU benchmark | ✅ [docs/benchmarks/phase1-benchmark.md](docs/benchmarks/phase1-benchmark.md) (GPU: not measured – no usable GPU) |
-| Face embeddings (SFace, ONNX Runtime), landmark alignment, quality gate, automatic registration, re-identification across sessions/restarts, visitor gallery + details, live recognition labels + notifications | ✅ Phase 3 ([report](docs/phase-3-report.md), [benchmark](docs/benchmarks/phase3-recognition.md)) |
-| Visit lifecycle (grace period, reacquisition, EOF/interruption rules), idempotent entry/exit events in PostgreSQL + evidence crops + mandatory `events.log` with outbox, crash reconciliation, Event Logs page, visit details, live entry/exit notifications | ✅ Phase 4 ([report](docs/phase-4-report.md), [ADR 0014](docs/decisions/0014-visit-lifecycle-and-event-delivery.md), [benchmark](docs/benchmarks/phase4-visits.md)) |
-| Unique registered-visitor counts (global / session / scope), returning visitors, entry/exit statistics, active visits with session-liveness, activity charts, source/session breakdowns, recognition-coverage diagnostics, database-backed aggregation, live refresh, read-only count reconciliation, Analytics + Overview pages | ✅ Phase 5 ([report](docs/phase-5-report.md), [ADR 0015](docs/decisions/0015-counting-semantics.md), [benchmark](docs/benchmarks/phase5-analytics.md)) |
-| RTSP hardening, per-user auth, deployment, final submission | Phases 6–7 (`docs/phase-roadmap.md`) |
+| Demo video (Loom/YouTube) | **TODO, not recorded** |
+| GitHub repository | https://github.com/Nandana-T/Face-Tracker |
+| Live deployed frontend / API | **Not deployed.** Configuration is prepared ([Deployment](#deployment)) |
+| Sample outputs | [docs/sample-output/](docs/sample-output/) (public-domain fixture only) |
 
-## Project objective
-Katomaran AI is an intelligent face tracker for visitor analytics: it **detects** faces in video files and RTSP streams, **tracks** them, **recognises** returning people and **registers** new ones automatically, logs every **entry and exit** with a timestamped face image (database, image storage and the mandatory `events.log`), and shows **unique registered-visitor counts** and analytics in a live dashboard. Counts are registered face *identities*, not verified physical people ([docs/phase-5-report.md](docs/phase-5-report.md)).
+## At a glance
 
-## Demo and links
-* **Demo video (Loom/YouTube): TODO - not recorded yet. The submission is not complete until this link is here.** Plan: [docs/submission/demo-video-script.md](docs/submission/demo-video-script.md).
-* **Deployed frontend / API: TODO - not deployed.** Steps and blockers: [docs/deployment-guide.md](docs/deployment-guide.md). Local fallback: `scripts\start-all.ps1` + `scripts\start-frontend.ps1`.
-* **Repository:** TODO (push pending approval). Submission checklist: [docs/submission/submission-checklist.md](docs/submission/submission-checklist.md).
-* **Sample output** (safe: public-domain fixture, no real people): [docs/sample-output/](docs/sample-output/) - analytics, reconciliation, visits/events, `events.log` lines, entry/exit crops. Final evaluation on the real footage (aggregate only): [docs/final-evaluation.md](docs/final-evaluation.md).
+| Area | What it does |
+|---|---|
+| **Computer vision** | YOLO11n-face detection (ONNX Runtime, CPU), configurable frame skipping, ByteTrack-style multi-face tracking, YuNet landmark alignment, SFace embeddings |
+| **Visitor intelligence** | Automatic registration of new faces, re-identification across sessions and restarts, visit lifecycle with exactly one entry and one terminal event per visit |
+| **Evidence** | Timestamped cropped-face images on the local filesystem, PostgreSQL metadata, mandatory `events.log` |
+| **Analytics** | Unique registered identities via `COUNT(DISTINCT ...)`, returning visitors, entries, exits, active visits, read-only reconciliation |
+| **Dashboard** | Live annotated video, visitor gallery, event timeline, analytics (React) |
+| **Sources** | Video file, **upload a video from the dashboard**, RTSP stream, **this computer's webcam** |
+
+**Quick start (Windows, PowerShell):** see [Installation and local setup](#installation-and-local-setup). In short: `.\scripts\install.ps1`, `.\scripts\migrate.ps1`, `.\scripts\start-all.ps1`, then `.\scripts\start-frontend.ps1` in a second terminal.
+
+## Contents
+[Overview](#project-overview) · [Features](#key-features) · [Architecture](#architecture) · [AI pipeline](#the-ai-pipeline) · [Stack](#technology-stack) · [Structure](#project-structure) · [Setup](#installation-and-local-setup) · [Configuration](#configuration) · [Running](#running-the-application) · [Data model](#database-and-data-model) · [Logging](#logging-and-evidence) · [Counting](#unique-visitor-counting) · [Sample output](#sample-outputs) · [Testing](#testing-and-quality-assurance) · [Benchmarks](#benchmarks-and-compute-requirements) · [Deployment](#deployment) · [Security](#security-and-privacy) · [Limitations](#known-limitations) · [AI workflow](#ai-assisted-development-workflow) · [Troubleshooting](#troubleshooting) · [Docs index](#documentation-index)
+
+## Project overview
+
+**Problem.** A site wants to know how many *different* visitors appear on camera, and when each one arrived and left. Counting detections or tracks over-counts badly: one person leaves the frame and returns, is occluded, or appears in several videos, and each appearance would be counted again.
+
+**Detecting is not identifying.** A detector only says "there is a face in this box". A tracker links boxes across frames for a short time. Neither knows that the person in the lobby at 10:00 is the person at the door at 14:00. That requires a face *embedding* compared against stored identities.
+
+**What automatic registration achieves.** When a face is good enough and matches nobody, the system registers it as a new visitor (`V00124`). The next time that face is recognised it resolves to the same identity, so repeated visits do not raise the number of distinct identities.
+
+**What the application produces**
+- Persistent visitor identities with stored embeddings and a face image.
+- A visit per presence episode, with one entry and one terminal (exit) event, each with a timestamped crop.
+- `events.log`, database records and unique-visitor analytics.
+
+## Key features
+
+Every item below exists in the codebase and is covered by tests or a report.
+
+**Computer vision**
+- YOLO11n-face detection, `detection.frame_skip` set in `config.json`
+- Multi-face tracking with a TENTATIVE, CONFIRMED, LOST, REMOVED lifecycle
+- SFace recognition with YuNet landmarks and alignment
+- Automatic registration with a quality gate and a consistency check
+- Recognition quality filtering (size, sharpness, pose, confidence)
+
+**Visitor intelligence**
+- Persistent visitor ids, registration de-duplication
+- Visit lifecycle with grace period and reacquisition
+- Idempotent entry and terminal events
+- Unique identity counting, returning-visitor metrics
+
+**Monitoring dashboard**
+- Live video with bounding-box overlays and track/recognition labels
+- Visitor gallery and details, Event Logs with evidence images
+- Analytics and Overview pages, live refresh
+- Video upload and deletion, source selection (file, RTSP, webcam)
+
+**Reliability and security**
+- Sign-in, protected REST routes, single-use WebSocket tickets, worker token
+- Outbox delivery with exactly-once logical events (unique constraints and deterministic ids)
+- Private image storage, crash reconciliation, structured logs
+- Automated unit, integration, component and end-to-end tests
 
 ## Architecture
-React SPA ⇄ FastAPI (`/api/v1`) ⇄ PostgreSQL, plus an independent **video worker** process that dials the API over a WebSocket
-(inference never runs inside the API; the worker needs no database credentials and no inbound port).
-Details: [architecture](docs/architecture.md) · [API](docs/api-contracts.md) · [testing](docs/testing-strategy.md) ·
-[deployment & D: policy](docs/deployment.md) · [privacy & security](docs/privacy-and-security.md) · [security runbook](docs/security-runbook.md) · [ADRs](docs/decisions/) · [AI/implementation notes](docs/ai-notes.md).
 
-### Cloud deployment architecture (prepared, not deployed)
+```mermaid
+flowchart LR
+  subgraph Browser
+    UI["React dashboard"]
+  end
+  subgraph API_Host["FastAPI API (single instance)"]
+    API["REST + WebSocket"]
+  end
+  subgraph Data["Persistence"]
+    DB[("PostgreSQL")]
+    IMG[("Image storage: local disk or private Supabase bucket")]
+  end
+  subgraph Worker["Video worker process (next to the camera / models)"]
+    SRC["Video file / upload / RTSP / webcam"] --> DET["YOLO11n-face"]
+    DET --> TRK["Tracker"]
+    TRK --> ALN["YuNet alignment + quality gate"]
+    ALN --> EMB["SFace embedding"]
+    EMB --> ID["Identity resolution"]
+    ID --> VIS["Visit lifecycle"]
+  end
+  UI <-->|"HTTPS REST, WSS stream"| API
+  API <--> DB
+  API <--> IMG
+  VIS -->|"outbound WebSocket (worker token)"| API
 ```
-Browser ── HTTPS/WSS ──► Vercel (static SPA)  ──►  Render: ONE lightweight FastAPI instance (no AI models)
-                                                    ├─ Supabase PostgreSQL (TLS, RLS)           migrations 0001..0004
-                                                    ├─ Supabase Storage PRIVATE bucket           faces/ + evidence/ (service-role key, server only)
-                                                    └─ /api/v1/worker/ws  ◄── WSS, token ── AI worker on YOUR machine (D:)
-                                                                                           models + camera/video; no DB or storage keys
-```
-Guide, free-tier limits (15-minute spin-down, ~1 min cold start, ephemeral disk), recovery table and rollback: [docs/deployment-guide.md](docs/deployment-guide.md). Image storage is switchable (`STORAGE_BACKEND=local|supabase`, [ADR 0016](docs/decisions/0016-private-object-storage.md)).
 
-### Hardware requirements (measured on an i5-1240P, CPU only, no GPU)
-| Component | Need | Measured |
+| Component | Role |
+|---|---|
+| **Frontend** | React SPA. Signs in, starts and stops sessions, shows the live stream, visitors, events and analytics. Never receives embeddings. |
+| **API** | FastAPI (`/api/v1`). Owns the live session state, all database and image writes, and serves the dashboard. Loads no AI model. |
+| **Video worker** | Separate Python process. Reads the source, runs detection, tracking and recognition, and **dials the API over an outbound WebSocket**. It holds no database credentials and opens no inbound port. |
+| **Database** | PostgreSQL (source of truth). Schema created only by Alembic. |
+| **Image storage** | Face crops and evidence images, switchable between local disk and a private Supabase Storage bucket (`STORAGE_BACKEND`). Never served statically. |
+| **WebSocket** | Worker to API (events, frames), API to browser (annotated frames and change notices, using single-use tickets). |
+
+Design rationale: [docs/architecture.md](docs/architecture.md), [ADR 0001](docs/decisions/0001-modular-monolith-with-worker.md), [ADR 0008](docs/decisions/0008-worker-api-transport.md).
+
+## The AI pipeline
+
+| # | Stage | Detail |
 |---|---|---|
-| AI worker (per stream) | 4 CPU threads, ≈ 0.6–1 GB RAM | detector ≈ 55 ms/frame (78 ms at 4K), worker RSS 171–181 MB idle-to-active, 520–880 MB peak on 2.7K/4K footage; CPU ≈ 24 % of 16 threads at `frame_skip=2`; 4K runs about real time with no headroom. GPU: not measured |
-| API | any 512 MB host, no GPU | RSS ≈ 115 MB, never loads a model |
-| Database / storage | free tiers are enough for a demo | crops ≈ 7-15 KB; Supabase Free storage 1 GB |
+| 1 | **Frame acquisition** | File, uploaded file, RTSP (timeouts, bounded reconnect with back-off, stall watchdog, credentials redacted in logs) or local webcam |
+| 2 | **YOLO face detection** | `yolov11n-face` ONNX, 640 px input, confidence 0.5, NMS IoU 0.45 |
+| 3 | **Frame skipping** | `detection.frame_skip = N` skips N frames between detections, so the detector runs on every (N+1)th frame. Default 2 means every third frame |
+| 4 | **Multi-face tracking** | ByteTrack-style, time-based (seconds, not frames) so it does not depend on FPS or frame skip |
+| 5 | **Crop generation** | Face crop (max 192 px) per confirmed track |
+| 6 | **Landmarks and alignment** | YuNet 5-point landmarks, similarity alignment |
+| 7 | **Quality assessment** | Size, detector confidence, yaw/roll, sharpness, combined score. A failing face is never identified or registered |
+| 8 | **Embedding** | SFace, 128-dimensional, scheduled per track (not every face on every frame) |
+| 9 | **Identity matching** | Cosine similarity with a vote window, an ambiguity margin and switch hysteresis |
+| 10 | **Automatic registration** | Needs consecutive novel observations over time, mean quality and mutual consistency |
+| 11 | **Visit lifecycle** | Video-time rules for missing, reacquired and closed visits |
+| 12 | **Evidence persistence** | Image, then one database transaction (visit, event, outbox), then an `events.log` line |
+| 13 | **Unique-visitor analytics** | SQL aggregates over visits and identities |
 
-### Licensing notes
-YOLO face detector and the SFace/YuNet recognition models are downloaded by pinned checksum onto D: (never committed). SFace/YuNet files are Apache-2.0/MIT, but the **training data of the recognition weights is not documented** and InsightFace weights are non-commercial - treat the recognition stack as **hackathon/non-commercial** ([ADR 0013](docs/decisions/0013-recognition-model-and-licensing.md), [ADR 0007](docs/decisions/)). LFW (evaluation) is a research benchmark kept local and not redistributed. The only image in the repository is a NASA public-domain portrait used as a test fixture.
+**Three different identifiers**
 
-### Accuracy limitations (read before quoting a number)
-* **Registered identities are counted exactly; physical people are not.** Faces that fail the quality gate (blur, profile, small, masks) are never identified; duplicates and misses are possible (labelled LFW-based test: 14 true people, 14 registered, but 1 duplicate and 1 miss cancelling out; 0 wrong merges).
-* The hackathon footage has **no person-level labels**: only operational diagnostics exist for it (9 of 74 confirmed tracks resolved to an identity).
-* Exit events are the last sighting or "observation ended", never a verified departure. RTSP was tested against a local RTSP **server**, **not a physical camera**. One shared admin role; single API instance (no high availability).
+| Id | Scope | Meaning |
+|---|---|---|
+| `track_id` | One session, temporary | A box followed across frames. Never reused, never stored as identity |
+| `visitor_id` | Permanent | A registered face identity (shown as `V00124`) |
+| `visit_id` | One presence episode | One continuous (or briefly interrupted) stay of one visitor |
 
-## Prerequisites (Windows 11 / PowerShell; Linux works with the equivalent commands)
-* Node.js 20+ and npm
-* [uv](https://docs.astral.sh/uv/) (installs Python **3.12** and the venv inside the project)
-* PostgreSQL 15+: hosted (Supabase/Neon), **or** the embedded local one started by `scripts\local-db.ps1` (no Docker needed)
-* Microsoft Edge or Chrome for E2E tests (`PW_CHANNEL=msedge`), or `npx playwright install chromium`
+**Example.** Visitor `V00007` is registered at 10:00 (track 4, visit A). They leave, return at 11:30 in a new session (track 2, visit B). Visits become 2 and entries become 2, but unique registered identities stay at 1, because the count is `COUNT(DISTINCT visitor_id)`.
 
-## Setup
-```powershell
-python -m pip install --target .tools\uv uv      # one-time, skip if uv exists
-.\scripts\install.ps1            # Python 3.12 + .venv + npm ci; creates .env from .env.example
-# edit .env: DATABASE_URL, WORKER_TOKEN (see below)
-.\scripts\download-model.ps1     # explicit, checksum-verified model download into models\ (never automatic)
-.\scripts\download-model.ps1 -Recognition   # SFace embedder + YuNet landmarks (Phase 3; read ADR 0013 for the licence scope)
-.\scripts\migrate.ps1            # apply Alembic migrations (0001, 0002)
-.\scripts\make-sample-video.ps1  # optional: synthetic demo clip in datasets\samples
+## Technology stack
+
+Versions are taken from `backend/pyproject.toml`, `backend/uv.lock` and `frontend/package.json`.
+
+| Layer | Technology |
+|---|---|
+| Frontend | React 19, TypeScript 6, Vite 8, React Router 7, TanStack Query 5, Tailwind CSS 4 |
+| Backend | Python 3.12, FastAPI, Uvicorn, Pydantic 2, SQLAlchemy 2 (sync), psycopg 3, Alembic |
+| Detection | YOLO11n-face, ONNX Runtime (CPU provider) |
+| Tracking | In-repo ByteTrack-style tracker ([ADR 0012](docs/decisions/0012-tracker-selection.md)) |
+| Recognition | SFace 128-d embeddings ([ADR 0013](docs/decisions/0013-recognition-model-and-licensing.md)) |
+| Landmarks / alignment | YuNet |
+| Video I/O | OpenCV (headless) |
+| Database | PostgreSQL 15+ (embedded `pgserver` locally, Supabase when hosted) |
+| Image storage | Local filesystem (default), Supabase private bucket (implemented, not yet exercised against a real bucket) |
+| Real-time transport | WebSocket (worker to API, API to browser) |
+| Testing | pytest, Vitest, Testing Library, Playwright |
+| Quality | Ruff, mypy (strict), ESLint, `tsc` |
+| Deployment config | Vercel (frontend), Render (`render.yaml`, API), Supabase (database and storage) |
+
+**Deployed vs configured.** Only the Supabase **database** has been touched: migrations to `0004` were applied and verified ([docs/gate-a-runbook.md](docs/gate-a-runbook.md)). Vercel, Render and the Supabase storage bucket are configured but **not provisioned**.
+
+## Project structure
+
+```text
+Face-Tracker/
+├── backend/
+│   ├── app/
+│   │   ├── api/v1/          REST + WebSocket routes (auth, processing, visitors, events, analytics, uploads, ws)
+│   │   ├── core/            config schema, settings, errors, logging
+│   │   ├── db/ models/ repositories/ schemas/
+│   │   ├── services/        identity, visits, events, analytics, session manager, storage
+│   │   ├── vision/          detection/, tracking/, recognition/, sources/ (file, rtsp, webcam)
+│   │   └── workers/         video worker process, pipeline, protocol
+│   ├── alembic/versions/    migrations 0001-0004
+│   ├── benchmarks/          measured benchmarks and evaluations
+│   └── tests/               unit, integration, e2e
+├── frontend/
+│   ├── src/features/        monitoring, visitors, events, analytics, overview, auth, settings
+│   └── e2e/                 Playwright suites
+├── config/config.json       validated runtime configuration
+├── scripts/                 install, migrate, start, check, verification tools
+├── docs/                    architecture, reports, ADRs, benchmarks, sample output, submission
+├── render.yaml              Render blueprint (not applied)
+└── docker-compose.yml       optional local PostgreSQL
 ```
-Everything (venv, caches, models, datasets, logs, temp) stays inside the project directory – see [docs/deployment.md](docs/deployment.md#5-d-drive-policy-this-machine).
-Run `. .\scripts\env.ps1` first if you invoke tools by hand.
 
-**Sign-in:** set `ADMIN_PASSWORD` in `.env` to require a password (REST, the dashboard and the frame stream are then protected; mandatory with `APP_ENV=production`, which also requires `AUTH_SECRET`, a 24+ character `WORKER_TOKEN` and https-only `CORS_ORIGINS`). Without it (local development) the API stays open.
+Model weights, datasets, caches, logs with real faces, backups and `.env` are git-ignored and never committed.
 
-**Secrets:** `WORKER_TOKEN` – generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"`; the API and the worker read the same value from `.env`.
-RTSP cameras: put the URL in an environment variable (e.g. `RTSP_FRONT_DOOR=rtsp://user:pass@host/stream`) and reference its *name* from
-`config.json` (`{"id":"front-door","label":"Front door","type":"rtsp","url_env":"RTSP_FRONT_DOOR"}`). The browser can only choose a source id.
+## Installation and local setup
 
-## Database
-* **Hosted (Supabase):** use the **Session pooler** connection string (the direct host is IPv6-only):
-  `DATABASE_URL=postgresql://postgres.<ref>:<url-encoded-password>@<region>.pooler.supabase.com:5432/postgres?sslmode=require` and keep `DB_USE_PGBOUNCER=false` (session mode).
-  The credential was rotated and **migration `0002` is applied and verified** (revision `0002`, tables present, RLS on, TLS in use). Phase 2 needs no migration. **Phase 3 adds migration `0003`** (visitors, face_embeddings, identity_associations) and **Phase 4 adds `0004`** (visits, visit_events, event_delivery_outbox): both verified on the local PostgreSQL only. **The hosted Supabase database is still at `0002` - nothing was written to it.** Apply them deliberately, in order, with `scripts\migrate-cloud.ps1` after reading the preflight report in [docs/phase-4-report.md](docs/phase-4-report.md).
-  Procedure and the credential check: [docs/security-runbook.md](docs/security-runbook.md), `.\scripts\migrate-cloud.ps1` (idempotent; refuses to run with the old exposed password).
-* **Local (no Docker, no credentials):** `. .\scripts\local-db.ps1 start` starts an embedded PostgreSQL in `storage\pgdata` and sets `DATABASE_URL`/`TEST_DATABASE_URL` for the shell; then `.\scripts\migrate.ps1`.
-  Alternatively `docker compose up -d db`.
-* The schema is only ever created by Alembic, never `create_all()` in the app.
+**Requirements:** Windows 11 with PowerShell, Git, Node.js 20+, [uv](https://docs.astral.sh/uv/) (installs Python 3.12 into the project), PostgreSQL 15+ (hosted, or the embedded one started by `scripts\local-db.ps1`, no Docker needed), and Microsoft Edge or Chrome for the E2E tests. Docker is optional. Linux works with equivalent commands but is not the primary tested environment.
 
-## Run
 ```powershell
-.\scripts\start-all.ps1          # API (127.0.0.1:8000, docs at /api/docs) + video worker, as two processes
-.\scripts\start-frontend.ps1     # http://localhost:5173  -> Live Monitoring
-# or separately:  .\scripts\start-backend.ps1   and   .\scripts\start-worker.ps1
+git clone https://github.com/Nandana-T/Face-Tracker.git D:\Face-Tracker
+cd D:\Face-Tracker
+
+.\scripts\install.ps1                        # Python 3.12 venv, npm ci, creates .env from .env.example
+# edit .env: DATABASE_URL (or use the local database below), WORKER_TOKEN
+
+. .\scripts\local-db.ps1 start               # optional: embedded PostgreSQL in storage\pgdata, sets DATABASE_URL
+.\scripts\download-model.ps1                 # YOLO face model, checksum-verified (explicit, never automatic)
+.\scripts\download-model.ps1 -Recognition    # SFace + YuNet (read ADR 0013 first: non-commercial scope)
+.\scripts\migrate.ps1                        # Alembic migrations 0001-0004
+.\scripts\make-sample-video.ps1              # optional synthetic demo clip
 ```
-Open **Live Monitoring**, pick a source, press **Start processing**. If no worker is connected or the model is missing the page says so and
-disables Start. Leaving the page does not stop a session; Stop does.
 
-## Quality checks / tests
+The venv, caches, models, datasets and logs all stay inside the project directory ([docs/deployment.md](docs/deployment.md)). Run `. .\scripts\env.ps1` first if you invoke tools by hand.
+
+**Starting the servers (two terminals, because both block):**
+
 ```powershell
-.\scripts\check.ps1              # model checksum, ruff, mypy, pytest, eslint, tsc, vitest, build, playwright (uses the local PostgreSQL)
+# Terminal 1: API (127.0.0.1:8000, docs at /api/docs) and the video worker as two processes
+.\scripts\start-all.ps1
+
+# Terminal 2: dashboard at http://localhost:5173
+.\scripts\start-frontend.ps1
+```
+
+`scripts\start-backend.ps1` and `scripts\start-worker.ps1` start the API and worker separately. Docker is not required.
+
+## Configuration
+
+**Environment (`.env`, see `.env.example`; never commit it).**
+
+| Component | Variables |
+|---|---|
+| API | `APP_ENV`, `CORS_ORIGINS`, `CONFIG_FILE`, `LOG_DIR`, `STORAGE_DIR`, `MODELS_DIR`, `LOG_LEVEL` |
+| Database | `DATABASE_URL`, `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_CONNECT_TIMEOUT_SECONDS`, `DB_CONNECT_RETRIES`, `DB_USE_PGBOUNCER`, `TEST_DATABASE_URL` (tests only) |
+| Authentication | `ADMIN_PASSWORD`, `AUTH_SECRET`, `AUTH_TOKEN_TTL_MINUTES` |
+| Worker | `WORKER_TOKEN`, `WORKER_API_URL`, `WORKER_ID` |
+| Storage | `STORAGE_BACKEND` (`local` or `supabase`), `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_BUCKET` (API only) |
+| Video sources | `RTSP_*` variables, referenced by name from `config.json` |
+| Frontend (build time) | `VITE_API_BASE_URL`, `VITE_DEV_PROXY_TARGET` |
+
+`APP_ENV=production` requires `ADMIN_PASSWORD`, `AUTH_SECRET`, a 24+ character `WORKER_TOKEN` and https-only `CORS_ORIGINS`. Generate a token with `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+
+**Sample `config/config.json`** (abridged from the validated file; the schema rejects unknown keys, and changes need an API and worker restart):
+
+```json
+{
+  "video": {
+    "sample_dir": "datasets/samples",
+    "webcam_enabled": true,
+    "webcam_index": 0,
+    "sources": [
+      { "id": "lobby-file", "label": "Lobby recording", "type": "file", "path": "datasets/samples/lobby.mp4" },
+      { "id": "front-door", "label": "Front door camera", "type": "rtsp", "url_env": "RTSP_FRONT_DOOR" }
+    ],
+    "rtsp": { "connect_timeout_seconds": 10, "read_timeout_seconds": 10, "max_reconnect_attempts": 0, "max_backoff_seconds": 30 }
+  },
+  "detection": { "frame_skip": 2, "confidence_threshold": 0.5, "model": "yolov11n-face", "input_size": 640, "iou_threshold": 0.45, "max_faces": 100, "intra_op_threads": 4, "cpu_spin_wait": false },
+  "worker": { "queue_size": 4, "realtime_pacing": true, "heartbeat_interval_seconds": 5 },
+  "stream": { "max_fps": 15, "max_width": 960, "jpeg_quality": 70 },
+  "recognition": { "similarity_threshold": 0.50, "novelty_threshold": 0.40 },
+  "tracking": { "enabled": true, "high_confidence": 0.6, "confirm_hits": 3, "max_missing_seconds": 2 },
+  "visits": { "missing_after_seconds": 1.5, "exit_after_seconds": 8, "max_frame_gap_seconds": 2, "evidence_dir": "logs" },
+  "logging": { "level": "INFO", "events_file": "logs/events.log" }
+}
+```
+
+**`frame_skip` semantics.** It is the number of frames *skipped between detections*. With `frame_skip = 2` the detector runs on frames 0, 3, 6, and so on. The tracker is updated only on analysed frames, using their real timestamps, and its timeouts are in seconds, so they do not depend on the frame rate. Values above about 3 are not recommended in crowds.
+
+**RTSP.** Put the URL (which may contain credentials) in an environment variable such as `RTSP_FRONT_DOOR` and reference only its *name* via `url_env`. The browser can only choose a source id, never a path or URL.
+
+The full key reference (every threshold, with its meaning) is in [docs/architecture.md](docs/architecture.md) and the phase reports ([tracking](docs/phase-2-report.md), [recognition](docs/phase-3-report.md), [visits](docs/phase-4-report.md)).
+
+## Running the application
+
+1. **Database.** Use your hosted `DATABASE_URL`, or `. .\scripts\local-db.ps1 start`, then `.\scripts\migrate.ps1`.
+2. **API and worker.** `.\scripts\start-all.ps1`.
+3. **Frontend.** `.\scripts\start-frontend.ps1`, then open http://localhost:5173.
+4. **Sign in** with `ADMIN_PASSWORD` if it is set (without it, local development stays open).
+5. **Select a source** on **Live Monitoring**: a sample, an RTSP camera, **This computer's camera**, or **Upload a video** (Choose file; mp4, avi, mkv, mov, webm).
+6. **Start processing.** Start is disabled with an explanation if no worker is connected or a model is missing.
+7. **Observe** the live stream: boxes, `#id` track labels, recognition labels (`V...`, "Recognizing", "Low quality").
+8. **Visitors** page: registered visitors, gallery and details.
+9. **Event Logs** page: entry and exit events with their crops, visit details.
+10. **Analytics** and **Overview** pages: unique registered identities, returning visitors, visits, events, coverage diagnostics.
+11. **Stop** the session with the Stop button. Leaving the page does not stop it.
+
+Uploaded videos are stored on the API host under `storage/uploads`; the worker must read the same folder (true locally). You can delete an upload afterwards. Only upload videos you are allowed to process: faces in them are processed and visitors are registered.
+
+## Database and data model
+
+Created only by Alembic migrations `0001`-`0004` ([backend/alembic/versions/](backend/alembic/versions/)).
+
+```mermaid
+erDiagram
+  processing_sessions ||--o{ visits : "contains"
+  visitors ||--o{ face_embeddings : "has"
+  processing_sessions ||--o{ identity_associations : "tracks resolved in"
+  visitors ||--o{ identity_associations : "resolved to"
+  visitors ||--o{ visits : "makes"
+  visits ||--o{ visit_events : "has entry and terminal"
+  visit_events ||--o{ event_delivery_outbox : "delivery state"
+```
+
+| Table | Role |
+|---|---|
+| `app_metadata` | Schema bookkeeping (migration 0001) |
+| `processing_sessions` | One row per processing run: source, state, timestamps. At most one active (migration 0002) |
+| `visitors` | Persistent registered identities (`visitor_id`, `V...` label) (0003) |
+| `face_embeddings` | Up to 5 embeddings per visitor, never exposed by the API (0003) |
+| `identity_associations` | Records which session track resolved to which visitor (0003) |
+| `visits` | One presence episode per visitor with entry time, end time and closure reason (0004) |
+| `visit_events` | `entry` and terminal events with evidence image reference. Unique constraints and deterministic ids make logical events exactly-once (0004) |
+| `event_delivery_outbox` | Tracks delivery of each event to `events.log` and retries (0004) |
+
+Migrate with `.\scripts\migrate.ps1` (local) or `.\scripts\migrate-cloud.ps1` (hosted, only after reading [docs/gate-a-runbook.md](docs/gate-a-runbook.md); it backs up and rehearses a restore first). Never put credentials in the command or the repository.
+
+## Logging and evidence
+
+- **`events.log`** (`logging.events_file`, JSON lines): the pipeline narrative plus durable `visit.entry`, `visit.exit` and `visit.interrupted` records with event id, visit id, visitor id, time, source, image reference, persistence outcome and delivery attempt.
+- **Evidence images**: `logs/entries/YYYY-MM-DD/<event_id>.jpg` and `logs/exits/YYYY-MM-DD/<event_id>.jpg`, local filesystem, never served statically.
+- **Event kinds**: entry; exit (visitor absent past `exit_after_seconds`, recorded at the last sighting); *observation ended* (video ended or monitoring stopped while the visitor was in view); *interrupted* (worker, API or source failed, so the end is unknown).
+- **Exit evidence is the last good crop**, not an image captured at the physical instant of departure (`image_kind: last_good_observation`).
+- **Idempotency**: deterministic event ids and unique constraints prevent duplicate logical events; the log's `delivery_attempt` explains a redelivery after a crash.
+- **Verification**: `python scripts\verify_events_log.py` compares the file with the database (missing lines, unexplained duplicates, unknown events). Also `GET /api/v1/events/log-verification`.
+
+## Unique visitor counting
+
+| Metric | Definition |
+|---|---|
+| **Registered identities** | All visitors in the database (global) |
+| **Unique registered identities (scope)** | `COUNT(DISTINCT visitor_id)` over visits whose entry time falls in a date or session scope `[since, until)` |
+| **Returning visitors** | Seen in a later session than the one that registered them |
+| **Visits** | Presence episodes (never a count of people) |
+| **Entries / terminal events** | Event rows by type |
+| **Active observed visits** | Open visits of the *live* session; stale rows from crashed sessions are reported, not counted |
+| **Unresolved diagnostics** | Tracks that never reached an identity (recognition coverage) |
+
+Repeated tracks, visits or retries never increase the global identity count by themselves. Faces that are ambiguous or unresolved are never added to a unique count. Erasing an identity removes it from the registered count. `python scripts\reconcile_counts.py` recomputes the counts independently (**read-only**; there is no repair mode). Definitions and semantics: [docs/phase-5-report.md](docs/phase-5-report.md), [ADR 0015](docs/decisions/0015-counting-semantics.md).
+
+## Sample outputs
+
+Safe examples (public-domain NASA portrait fixture, no real person) are in [docs/sample-output/](docs/sample-output/):
+
+| Sample | File |
+|---|---|
+| Analytics response | [analytics-overview.json](docs/sample-output/analytics-overview.json) |
+| Visit and event database records | [visits-and-events.json](docs/sample-output/visits-and-events.json) |
+| `events.log` excerpt | [events-log-excerpt.jsonl](docs/sample-output/events-log-excerpt.jsonl) |
+| Count reconciliation | [reconciliation.json](docs/sample-output/reconciliation.json) |
+| Entry image | [images/entry-ad5187e3.jpg](docs/sample-output/images/entry-ad5187e3.jpg) |
+| Exit image | [images/exit-d3331967.jpg](docs/sample-output/images/exit-d3331967.jpg) |
+
+Evidence from the **real hackathon footage** is private and git-ignored (it shows real people); only aggregate numbers are published in [docs/final-evaluation.md](docs/final-evaluation.md) and [docs/real-video-validation.md](docs/real-video-validation.md).
+
+**Gaps (TODO):** no detection/tracking screenshot of the dashboard and no visitor-table record are included yet. They would be added only from the fixture, not from real footage.
+
+## Testing and quality assurance
+
+| Layer | Tools | What it covers |
+|---|---|---|
+| Backend unit and integration | pytest (embedded PostgreSQL) | domain logic, API, database constraints, event delivery, analytics |
+| Frontend components | Vitest, Testing Library | pages, upload, monitoring states |
+| End to end | Playwright | the real stack with real models, restarts, crash recovery, analytics workflow |
+| Static checks | Ruff, mypy strict, ESLint, `tsc`, production build | |
+| Data checks | `scripts\verify_events_log.py`, `scripts\reconcile_counts.py` | log vs database, count consistency |
+
+```powershell
+.\scripts\check.ps1              # everything (uses the local PostgreSQL)
 .\scripts\check.ps1 -SkipE2E
-.\scripts\test-backend.ps1 [-Unit]    .\scripts\test-frontend.ps1 [-E2E]
+.\scripts\test-backend.ps1       # add -Unit for unit tests only
+.\scripts\test-frontend.ps1      # add -E2E for Playwright
 ```
-Last full run (this machine, 2026-11-11): backend **565 passed** · frontend **245 passed** · Playwright **30 passed** (authenticated real stack with the real models, incl. application restarts, crash recovery and the analytics workflow) · **840 total** (Phase 5 baseline 813; a known Starlette-TestClient websocket flake, present on a clean HEAD too, is noted in the Phase 6 report) · local checks: `scripts\verify_remote_path.py` (production mode + TLS + remote-style worker, 19/19), `scripts\verify_rtsp_local.py` (local RTSP server, 12/12), `scripts\smoke_deployed.py` (16/16 locally) ·
-ruff, mypy (strict), ESLint, `tsc`, production build clean. Breakdown and what the tests do *not* prove: [docs/testing-strategy.md](docs/testing-strategy.md).
-Benchmark: `.venv\Scripts\python.exe backend\benchmarks\benchmark_detector.py` then `render_report.py`.
 
-## Configuration reference
-**Environment (`.env`)** – see `.env.example`: `APP_ENV`, `DATABASE_URL`, `TEST_DATABASE_URL` (tests never fall back to `DATABASE_URL`; unset = embedded local PostgreSQL), `ADMIN_PASSWORD`, `AUTH_SECRET`, `AUTH_TOKEN_TTL_MINUTES`, `DB_*`, `CORS_ORIGINS` (explicit list, no `*`), `WORKER_TOKEN`, `WORKER_API_URL`, `WORKER_ID`,
-`CONFIG_FILE`, `LOG_DIR`, `STORAGE_DIR`, `MODELS_DIR`, `LOG_LEVEL`, `KATOMARAN_ROOT`, `RTSP_*` (referenced by `url_env`); frontend build-time `VITE_API_BASE_URL`, `VITE_DEV_PROXY_TARGET`.
+**Latest results actually run on this machine:**
 
-**Recognition thresholds** come from the LFW verification protocol and an identity-level simulation with the real decision logic ([benchmark](docs/benchmarks/phase3-recognition.md)); they are optimistic for hard surveillance footage, which has no identity labels here.
-
-**Tracking parameters** were set from sensitivity sweeps on the hackathon footage and a synthetic ground-truth benchmark, not copied from other projects; because the footage has no labels they are a
-preliminary calibration ([benchmark](docs/benchmarks/phase2-tracking.md)). `detection.frame_skip` keeps its Phase 1 meaning; the tracker is updated only on analysed frames using their real timestamps. Values of `frame_skip` above ≈ 3 are not recommended with tracking in crowds.
-
-**`config/config.json`** (validated at startup; unknown keys and incompatible combinations are rejected; **changing it requires restarting the API and worker** – there is no runtime mutation):
-
-| Key | Default | Meaning |
+| Suite | Result | Date |
 |---|---|---|
-| `video.sources[]` | `[]` | trusted sources: `{id,label,type:file,path}` or `{id,label,type:rtsp,url_env}` |
-| `video.sample_dir` | `datasets/samples` | every video file here becomes source `sample-<name>` |
-| `video.source_type` / `video.source` | `file` / `""` | legacy single source, exposed as id `default` |
-| `video.reconnect_interval_seconds` | 5 | first RTSP reconnect delay (doubles up to `video.rtsp.max_backoff_seconds`) |
-| `video.rtsp.*` | 10 / 10 / 0 / 30 | connect timeout, read timeout, max reconnect attempts (0 = unlimited), max back-off |
-| `detection.frame_skip` | 2 | **frames skipped between detections**: detector runs on frames 0, N+1, 2(N+1)… (2 ⇒ every 3rd) |
-| `detection.confidence_threshold` | 0.5 | min detector confidence (inclusive) |
-| `detection.model` / `input_size` | `yolov11n-face` / 640 | pinned model; input size is fixed by the model |
-| `detection.iou_threshold` / `max_faces` | 0.45 / 100 | NMS overlap, cap per frame |
-| `detection.intra_op_threads` / `cpu_spin_wait` | 4 / false | ONNX Runtime threads (0 = all cores) and idle busy-wait (see benchmark: spin-wait cost ~60 % of the CPU at real-time rates) |
-| `worker.queue_size` | 4 | bounded reader→inference queue |
-| `worker.realtime_pacing` | true | play files at their frame rate (false = as fast as possible) |
-| `worker.heartbeat_interval_seconds` | 5 | worker heartbeat; API declares it lost after 3 intervals |
-| `worker.start_timeout_seconds` / `stop_timeout_seconds` | 30 / 10 | STARTING / STOPPING watchdogs |
-| `stream.max_fps` / `max_width` / `jpeg_quality` | 15 / 960 / 70 | what is sent to browsers |
-| `tracking.enabled` | true | run the tracker in the worker (false = raw detections only, Phase 1 behaviour) |
-| `tracking.high_confidence` | 0.6 | only detections scoring ≥ this can **start** a track; weaker ones (down to `detection.confidence_threshold`) may only extend one |
-| `tracking.confirm_hits` | 3 | observed updates for TENTATIVE → CONFIRMED |
-| `tracking.tentative_timeout_seconds` | 0.5 | a TENTATIVE track not detected for this long is dropped ("rejected") |
-| `tracking.max_missing_seconds` | 2 | a LOST track not re-detected for this long is REMOVED; its id is never reused. **Seconds, not frames**, so it does not depend on FPS or `frame_skip` |
-| `tracking.match_iou` / `low_match_iou` / `lost_match_iou` | 0.2 / 0.3 / 0.1 | minimum box overlap to associate a track with a high-score / low-score detection / (for a LOST track) any detection |
-| `tracking.box_buffer` | 0.1 | boxes are grown by this fraction per side before computing overlap (keeps 12–30 px faces matchable); 0 = plain IoU |
-| `tracking.lost_velocity_decay_per_second` | 1.0 | damping of a LOST track's extrapolated velocity |
-| `tracking.max_tracks` | 200 | cap on simultaneously live tracks (births beyond it are refused and counted) |
-| `recognition.enabled` | true | recognition runs in the worker (needs tracking and the models from `download-model.ps1 -Recognition`); false = Phase 2 behaviour |
-| `recognition.similarity_threshold` | 0.50 | cosine similarity at/above which an observation votes **for an existing visitor** (with a clear margin). From the LFW evaluation: 0 wrong merges at ≥ 0.45 for 300 distinct people |
-| `recognition.novelty_threshold` | 0.40 | below this the face is **not** any registered visitor (registration candidate); between novelty and similarity the observation is *grey* - neither recognised nor registered. Must be ≤ similarity |
-| `recognition.ambiguity_margin` | 0.05 | best minus second-best **visitor** must exceed this, else the observation is ambiguous |
-| `recognition.min_face_px` / `min_detection_confidence` / `max_yaw` / `max_roll_degrees` / `min_sharpness` / `min_quality_score` | 40 / 0.6 / 0.45 / 30 / 15 / 0.3 | quality gate; a face failing it is never used (`INSUFFICIENT_QUALITY`) and never registered |
-| `recognition.observation_interval_seconds` / `warmup_observations` / `refresh_interval_seconds` | 0.5 / 6 / 5 | each confirmed track is embedded every 0.5 s for its first 6 observations, then every 5 s (identity verification); never every face on every frame |
-| `recognition.budget_ms_per_frame` / `queue_size` / `crop_max_px` | 80 / 8 / 192 | recognition work per analysed frame, bounded queue (drops when busy), size of the registration crop |
-| `recognition.vote_window` / `recognize_votes` / `switch_hysteresis` | 8 / 2 / 2 | a track needs 2 consistent match votes; to change its visitor another visitor needs 2 more votes than the current one (conflicts are recorded) |
-| `recognition.register_min_observations` / `register_min_seconds` / `register_min_quality` / `register_self_consistency` | 3 / 0.8 / 0.35 / 0.6 | automatic registration needs 3 consecutive novel observations over ≥ 0.8 s, mean quality ≥ 0.35, mutually consistent (mean pairwise cosine ≥ 0.6) |
-| `recognition.max_embeddings_per_visitor` / `index_sync_seconds` | 5 / 30 | embeddings stored per visitor; how often the in-memory index re-syncs from PostgreSQL |
-| `recognition.faces_dir` / `retention_days` / `model_path` | `storage/faces` / 0 / null | image store (on D:; never served statically), days without a sighting after which visitors are purged (0 = keep until erased), optional model override |
-| `visits.enabled` | true | visit lifecycle and entry/exit events (needs recognition: a visit belongs to a recognised/registered visitor) |
-| `visits.missing_after_seconds` / `exit_after_seconds` | 1.5 / 8 | **video-time** with no sighting of the visitor on any track: after the first the visit is *temporarily missing* (nothing logged), after the second the visit closes and ONE exit is recorded at the last sighting. A visitor who reappears earlier (any track) keeps the visit |
-| `visits.max_frame_gap_seconds` | 2 | a gap between two processed frames longer than this (stall, RTSP outage) is blind time, never absence |
-| `visits.evidence_dir` / `min_crop_quality` | `logs` / 0.3 | entry/exit face crops go to `<dir>/entries/YYYY-MM-DD/` and `<dir>/exits/YYYY-MM-DD/` (D:, never served statically) |
-| `visits.queue_size` / `max_attempts` / `retry_base_seconds` / `retry_max_seconds` / `drain_timeout_seconds` / `orphan_grace_seconds` | 1000 / 8 / 0.5 / 15 / 10 / 300 | persistence queue, retry/back-off of failed writes, how long a session end waits for its events, age before an unreferenced evidence file is deleted |
-| `logging` | … | logging (`LOG_LEVEL` env overrides level); `events_file` is the mandatory `events.log` |
+| Backend pytest | **598 passed** | 2026-11-12 |
+| Frontend Vitest | **255 passed** (18 files, `--maxWorkers=2`) | 2026-11-12 |
+| Playwright, full suite | **30 passed** (before the upload and webcam features) | 2026-11-11 |
+| Playwright, new video-upload test | **1 passed**, run on its own | 2026-11-12 |
+| Ruff, mypy strict, ESLint, `tsc`, build | clean | 2026-11-12 |
 
-## Analytics and count reconciliation
-* **Unique visitors** = `COUNT(DISTINCT visitor_id)` over the visits in the selected scope; **registered visitors** = all identities in the database (global); **returning** = seen in a later session than the one that registered them; **active visits** = open visits of the *live* session (stale rows of crashed sessions are reported, not counted). Definitions and the erasure policy: [docs/phase-5-report.md](docs/phase-5-report.md).
-* `python scripts\reconcile_counts.py [--json]` recomputes the global counts independently and reports differences (**read-only; there is deliberately no repair mode**); also `GET /api/v1/analytics/reconciliation` and the *Data consistency* panel. Benchmarks: `backend\benchmarks\benchmark_analytics.py` (synthetic rows, isolated schema) and `evaluate_unique_count.py` (LFW-labelled identities).
+The full Playwright suite was **not re-run** after the upload and webcam changes, and there is no browser test for the webcam source. The webcam source was checked against the real device and with unit tests using fake captures. Local verification scripts: `scripts\verify_remote_path.py` (production mode, TLS, remote-style worker), `scripts\verify_rtsp_local.py` (local RTSP server). Breakdown and gaps: [docs/testing-strategy.md](docs/testing-strategy.md).
 
-## Events and consistency tools
-* `events.log` (JSON lines, `logging.events_file`) holds the pipeline narrative (track created/recovered, face detected, embedding generated, recognition, registration, source reconnects) and the durable `visit.entry` / `visit.exit` / `visit.interrupted` records (event id, visit id, visitor id, time, session/source, image reference, persistence outcome, `delivery_attempt`). PostgreSQL is the source of truth; the file is an auditable delivery artifact.
-* `python scripts\verify_events_log.py [--repair]` compares the file with the database (missing lines, unexplained duplicates, events unknown to the database; a redelivery after a crash is *explained* by its higher `delivery_attempt`). `--repair` first runs reconciliation. The same report is available at `GET /api/v1/events/log-verification`, health at `GET /api/v1/events/health`.
+**Known limitation:** some Starlette `TestClient` WebSocket tests are intermittently flaky (present on a clean HEAD as well). Machine memory pressure can also crash test workers on this 16 GB laptop; use `OPENBLAS_NUM_THREADS=2` and `--maxWorkers=2`.
+
+## Benchmarks and compute requirements
+
+Measured on **Intel Core i5-1240P (12 cores / 16 threads), 15.7 GB RAM, Intel Iris Xe integrated graphics, CPU only**. Source reports: [phase1](docs/benchmarks/phase1-benchmark.md), [phase3](docs/benchmarks/phase3-recognition.md), [phase4](docs/benchmarks/phase4-visits.md), [phase5](docs/benchmarks/phase5-analytics.md), [real footage](docs/final-evaluation.md). The figures come from different scenarios and are not directly comparable.
+
+| Measurement | Value | Scenario |
+|---|---|---|
+| YOLO inference (real footage) | ≈ 55 ms per analysed frame (78 ms for 4K) | hackathon clips, 4 threads, `frame_skip=2` |
+| Detector throughput | ≈ 14.3 analysed frames/s (≈ 23 frames/s consumed at `frame_skip=0`) | detector benchmark ([phase1](docs/benchmarks/phase1-benchmark.md)), different scenario |
+| Worker memory | 520 MB typical on hall footage; 881 MB on 4K | peak RSS on real footage |
+| Recognition overhead | 10-16 ms per face (p95 31-38 ms), ≈ 2 ms/frame detector cost | [phase3](docs/benchmarks/phase3-recognition.md) |
+| Event persistence | 14-18 ms per event, off the frame path | [phase4](docs/benchmarks/phase4-visits.md) |
+| CPU use | ≈ 24 % of 16 threads at `frame_skip=2` on real footage; 4K runs about real time with no headroom | |
+| API memory | ≈ 115 MB, never loads a model | local production-mode run |
+| Worker memory (remote-style run) | 171-181 MB idle to active | local TLS loopback, not a network |
+| Model load / session init | ≈ 85 ms to create the ONNX session | phase1 benchmark |
+| Worker to browser latency | ≈ 6.6 ms mean | loopback on the same host, **not network latency** |
+
+**GPU: nothing was measured.** There is no usable GPU on the test machine and the detector pins the CPU execution provider. The report records an *unverified* hypothesis only: a discrete NVIDIA GPU is likely much faster per inference, but that needs a small untested code change (CUDA or DirectML provider) and measurement on the target GPU. Concurrent streams were not measured. Practical sizing: one stream per worker with 4 CPU threads and 1 GB RAM is what was verified.
+
+## Deployment
+
+| Item | Status |
+|---|---|
+| Supabase PostgreSQL | **Cloud verified:** migrations applied to `0004` and verified ([gate runbook](docs/gate-a-runbook.md)) |
+| Supabase private Storage bucket | Implemented and tested against a fake backend. **Not created or verified in the cloud** |
+| Render API (`render.yaml`) | **Configured only.** Never built or deployed (Docker is not installed on the development machine) |
+| Vercel frontend | **Configured only, not deployed** |
+| Worker connecting over WSS | Verified **locally** with production mode, TLS and a remote-style worker (`scripts\verify_remote_path.py`) |
+
+**No production URL exists.** Nothing is live. The architecture is: Vercel (static SPA) calls one Render FastAPI instance over HTTPS/WSS; the API uses Supabase PostgreSQL and a private Supabase bucket (service-role key on the API only); the AI worker runs on your own machine and connects outbound to `wss://.../api/v1/worker/ws` with the worker token. Keep the API at **one instance** because live session state is in memory. Environment variables, free-tier limits (15-minute spin-down), recovery and rollback: [docs/deployment-guide.md](docs/deployment-guide.md). Limitations: uploads and the webcam need the worker on the same machine as the files or camera, and the dashboard needs a worker running somewhere to process video.
+
+## Security and privacy
+
+- **Authentication:** shared admin password to a signed token; every REST route except `/health`, `/ready` and `/auth/*` is protected; login throttling.
+- **WebSocket:** single-use tickets bound to the session or to the analytics channel; the worker authenticates with a token.
+- **Biometric data:** embeddings and face images are never returned to the frontend, never served statically, and stay in private storage. Erasing a visitor deletes their data.
+- **Transport and secrets:** production requires TLS and https-only CORS; secrets live in the environment only; the service-role key exists only on the API.
+- **Logging:** structured logs; RTSP credentials are redacted.
+- **Licensing:** the SFace weights have **undocumented training data** and the project treats the recognition stack as **hackathon/non-commercial** ([ADR 0013](docs/decisions/0013-recognition-model-and-licensing.md), [ADR 0011](docs/decisions/0011-model-licence-assessment.md)). Do not use it commercially without clearing the licences.
+
+**Real limitations:** one shared administrator role and no per-user authorization; a single API instance; recognition accuracy on the unlabelled hackathon footage is unknown; consent is required before processing real people. No formal security compliance or certification is claimed. See [docs/privacy-and-security.md](docs/privacy-and-security.md) and [docs/security-audit.md](docs/security-audit.md).
+
+## Known limitations
+
+- **Faces are not people.** Counts are registered identities. Duplicates and misses are possible; the labelled LFW test registered 14 identities for 14 people with 1 duplicate and 1 miss cancelling out and 0 wrong merges.
+- **Low coverage on real footage.** Only 9 of 74 confirmed tracks resolved to an identity, because the quality gate rejects blurred, profile, small or masked faces. A masked face was registered (masks are not detected).
+- **Small or occluded faces** are missed by the detector; tracking can switch identities in crossings.
+- **No ground truth** for the hackathon footage, so recognition precision and recall there are unmeasured.
+- **Exit events** are the last sighting or "observation ended", not a verified departure.
+- **RTSP** was tested against a local RTSP *server*, not a physical camera.
+- **GPU** performance and hosted-network latency were not measured.
+- **Deployment** is prepared, not live; the cloud storage bucket is unverified.
+- **Licensing:** model and dataset terms restrict the project to non-commercial use.
+
+## AI-assisted development workflow
+
+The application was built with Claude Code through phased prompts, each phase delivering a vertical slice with tests and a written report. The original prompts are **not preserved in the repository** and are not reconstructed here; [docs/ai-notes.md](docs/ai-notes.md) records how the assistant was used. AI-generated code was checked with automated tests, real footage and the benchmark scripts, and risky decisions (licences, credential rotation, authentication) were reserved for the owner.
+
+| Phase | Objective and result | Key decision | Notable issue resolved |
+|---|---|---|---|
+| **0 Foundation** | Monorepo, FastAPI, Alembic, dashboard shell | Modular monolith plus worker ([ADR 0001](docs/decisions/0001-modular-monolith-with-worker.md)) | Migrations-only schema, test-DB isolation ([ADR 0006](docs/decisions/0006-migrations-only-and-test-isolation.md)) |
+| **1 Detection** ([report](docs/phase-1-report.md)) | File/RTSP sources, YOLO face detection, worker over WebSocket, live view | Worker dials the API ([ADR 0008](docs/decisions/0008-worker-api-transport.md)) | ORT spin-wait burned ≈ 70 % CPU; defaults changed |
+| **1.5 Stabilization** ([report](docs/phase-1-5-report.md)) | Sign-in, real-footage validation, licence review | Authenticated tickets for streams | Test DB can no longer fall back to the dev database |
+| **2 Tracking** ([report](docs/phase-2-report.md)) | Temporary track ids and lifecycle | In-repo tracker, time-based timeouts ([ADR 0012](docs/decisions/0012-tracker-selection.md)) | Faces of 12-30 px stay matchable via box buffer |
+| **3 Recognition** ([report](docs/phase-3-report.md)) | SFace embeddings, alignment, registration | Thresholds from the LFW evaluation ([ADR 0013](docs/decisions/0013-recognition-model-and-licensing.md)) | Duplicate registration under retries and concurrency |
+| **4 Visits and logging** ([report](docs/phase-4-report.md)) | Visit lifecycle, entry/exit events, evidence, `events.log` | Outbox and unique constraints ([ADR 0014](docs/decisions/0014-visit-lifecycle-and-event-delivery.md)) | Crash and redelivery handled by reconciliation |
+| **5 Counting and analytics** ([report](docs/phase-5-report.md)) | Database-backed unique counts, charts, reconciliation | Count definitions ([ADR 0015](docs/decisions/0015-counting-semantics.md)) | Stale rows of crashed sessions excluded from "active" |
+| **6 Deployment readiness** ([report](docs/phase-6-report.md)) | Storage abstraction, RTSP hardening, Gate A migration | Private object storage ([ADR 0016](docs/decisions/0016-private-object-storage.md)) | RTSP stalls that never timed out are now detected and reconnected |
+
+After Phase 6, video upload and the local-webcam source were added.
 
 ## Troubleshooting
-* **Start is disabled / "Video worker not connected"** – start the worker (`scripts\start-worker.ps1` or `start-all.ps1`); `WORKER_TOKEN` must match on both sides.
-* **"Face detection model unavailable"** – run `scripts\download-model.ps1` on the worker machine and restart the worker.
-* **Database indicator "Unavailable"** – check `DATABASE_URL` (URL-encode `$`/`@`), `sslmode=require` for hosted DBs, that a Supabase free project is not paused; or use `scripts\local-db.ps1`.
-* **"Backend not reachable"** – start the API; the dev proxy targets `http://127.0.0.1:8000` (`VITE_DEV_PROXY_TARGET`) and proxies WebSockets too.
-* **`ConfigError` at startup** – the message names the offending key in `config/config.json`.
-* **Playwright can't find a browser** – set `PW_CHANNEL=msedge` (or `chrome`) or install Chromium. E2E needs ports 8000 and 5173 free.
-* **Orphaned processes after a crashed run** – `python scripts\stop_stack.py <pid>` kills a stack and all its descendants; `python scripts\stop_stack.py --sweep` kills any API/worker of this repository's backend.
-* **"Face recognition model missing" / recognition panel says unavailable** – run `scripts\download-model.ps1 -Recognition` on the worker machine and restart the worker; recognition also needs `tracking.enabled`.
-* **The unique-visitor number is smaller than the people I saw** - expected: it counts registered identities, and faces that fail the quality gate (blur, profile, masks, small) are never identified. See *Recognition coverage* on the Analytics page; it is a diagnostic, not recall.
-* **The "In view now" number is 0 but there are open visits in the database** - open visits of sessions that are not live are *stale* (a crash); they are not present. Restart the API or run `POST /api/v1/events/reconcile` to close them.
-* **No entry/exit events appear** - visits exist only for recognised/registered visitors; if the Recognition panel says *Low quality* / *Undecided* for every face (quality gate), there will be no visits. This is by design (the gate is not lowered to produce events).
-* **An exit shows "Observation ended"** - the video ended or monitoring stopped while the visitor was still in view; it does not mean they left. **"Interrupted"** means the worker/API/source failed; no duration is shown because the end is unknown.
-* **No visitors are registered from my video** – by design most faces fail the quality gate (blur, profile, small, masks); the Recognition panel shows *Low quality* / *Undecided*. See `docs/benchmarks/phase3-recognition.md`.
+
+| Symptom | Fix |
+|---|---|
+| Database shows "Unavailable" | Check `DATABASE_URL` (URL-encode `$` and `@`), `sslmode=require` for hosted databases, that the Supabase project is not paused; or use `. .\scripts\local-db.ps1 start` |
+| TLS / SSL error | Use the Supabase **session pooler** string with `sslmode=require` and `DB_USE_PGBOUNCER=false` |
+| "Face detection model unavailable" | `.\scripts\download-model.ps1`, then restart the worker |
+| Recognition panel unavailable | `.\scripts\download-model.ps1 -Recognition`; recognition also needs `tracking.enabled` |
+| Invalid video source / upload refused | Use mp4, avi, mkv, mov or webm that OpenCV can decode; the server rejects fake files |
+| Camera / RTSP unavailable | Check the `RTSP_*` variable and network; for the webcam close other apps using it. The session ends after a few retries with a clear message |
+| "Video worker not connected" | Start the worker (`start-all.ps1`); `WORKER_TOKEN` must match on both sides |
+| WebSocket auth failure | Sign in again; tickets are single-use and short-lived |
+| Out-of-memory "Processing error" | Close other applications and press Retry; see the log at `logs\app.log` |
+| Migration mismatch | Run `.\scripts\migrate.ps1`; hosted databases only via the Gate A runbook |
+| Missing image evidence | Check `visits.evidence_dir` and that the files were not purged as orphans |
+| Fewer visitors than people seen | Expected: the quality gate; see "Recognition coverage" on the Analytics page |
+| CORS error | Add the frontend origin to `CORS_ORIGINS` (no `*`) and restart the API |
+| Port 8000 or 5173 in use | Stop the other process; `python scripts\stop_stack.py --sweep` stops this repository's API and worker |
+| Playwright cannot find a browser | `$env:PW_CHANNEL="msedge"` (or `chrome`), or `npx playwright install --only-shell chromium` |
+
+## Documentation index
+
+| Topic | Document |
+|---|---|
+| Architecture | [docs/architecture.md](docs/architecture.md) |
+| Phase roadmap | [docs/phase-roadmap.md](docs/phase-roadmap.md) |
+| API contracts | [docs/api-contracts.md](docs/api-contracts.md) |
+| Deployment | [docs/deployment-guide.md](docs/deployment-guide.md), [docs/deployment.md](docs/deployment.md), [docs/gate-a-runbook.md](docs/gate-a-runbook.md) |
+| Security and privacy | [docs/security-audit.md](docs/security-audit.md), [docs/privacy-and-security.md](docs/privacy-and-security.md), [docs/security-runbook.md](docs/security-runbook.md) |
+| Testing | [docs/testing-strategy.md](docs/testing-strategy.md) |
+| Benchmarks | [docs/benchmarks/](docs/benchmarks/) |
+| Phase reports | [1](docs/phase-1-report.md), [1.5](docs/phase-1-5-report.md), [2](docs/phase-2-report.md), [3](docs/phase-3-report.md), [4](docs/phase-4-report.md), [5](docs/phase-5-report.md), [6](docs/phase-6-report.md) |
+| Final evaluation | [docs/final-evaluation.md](docs/final-evaluation.md), [docs/real-video-validation.md](docs/real-video-validation.md) |
+| Decisions (ADRs) | [docs/decisions/](docs/decisions/) |
+| Sample outputs | [docs/sample-output/](docs/sample-output/) |
+| Submission | [docs/submission/submission-checklist.md](docs/submission/submission-checklist.md), [docs/submission/demo-video-script.md](docs/submission/demo-video-script.md), [docs/submission/github-commit-plan.md](docs/submission/github-commit-plan.md) |
+| AI notes | [docs/ai-notes.md](docs/ai-notes.md) |
 
 This project is a part of a hackathon run by https://katomaran.com
