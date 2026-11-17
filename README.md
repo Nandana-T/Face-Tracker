@@ -12,7 +12,7 @@
 
 | Deliverable | Status |
 |---|---|
-| Demo video (Loom) | [Watch on Loom](https://www.loom.com/share/0820e258870e4076934da68bf7a79c00) (shared publicly; checked by the project owner) |
+| Demo video (YouTube) | [Watch on YouTube](https://youtu.be/-wcVguNoseo) |
 | GitHub repository | https://github.com/Nandana-T/Face-Tracker |
 | Live deployed frontend / API | **Not deployed.** Configuration is prepared ([Deployment](#deployment)) |
 | Sample outputs | [docs/sample-output/](docs/sample-output/) (public-domain fixture only) |
