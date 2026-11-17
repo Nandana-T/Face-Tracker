@@ -8,7 +8,7 @@
 
 ## 🎥 Watch the Demonstration
 
-[Watch the Complete Katomaran Face Tracker Demonstration](https://www.loom.com/share/0820e258870e4076934da68bf7a79c00)
+[Watch the Complete Katomaran Face Tracker Demonstration](https://youtu.be/-wcVguNoseo)
 
 | Deliverable | Status |
 |---|---|
